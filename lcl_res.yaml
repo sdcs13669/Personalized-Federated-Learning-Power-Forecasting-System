@@ -1,0 +1,13 @@
+dataset_id: lcl_res
+name: Low Carbon London SmartMeter Energy Consumption Data
+source_url: https://data.london.gov.uk/dataset/smartmeter-energy-consumption-data-in-london-households-vqm0d
+timestep: 1800 s       # 原生采样间隔 30 分钟
+category: res                    # res（居民 residential）
+description: >
+  英国 UK Power Networks（伦敦配电网运营商）发起的 Low Carbon London 项目智能电表用电数据，
+  覆盖 2011-11 至 2014-02（约 1.1 万户 Greater London 住户，抽样代表伦敦人口）。
+  由 London Datastore 公开托管，CSV 解压后约 10 GB，含 1.67 亿行记录；
+  部分客户参与动态电价（Time-of-Use）实验。原始数据只读存档于 data/raw/lcl_res/。
+features:
+  - {raw: "tst",      unit: "iso" }        # 本地时间戳（ISO 8601，yyyy-mm-dd hh:mm:ss）
+  - {raw: "KWH",      unit: "kwh/halfhour"} # 每半小时电能消耗，kWh/30min

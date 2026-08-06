@@ -1,0 +1,27 @@
+dataset_id: sgcc_res
+name: Electricity Consumption Dataset of State Grid Corporation of China (SGCC)
+source_url: https://github.com/henryRDlab/ElectricityTheftDetection
+license:
+  name: 未明确声明(原始仓库无 LICENSE;部分第三方镜像仓库标注 MIT)
+  url: https://github.com/walawalagoose/Datasets-of-Electricity-Theft-Detection
+timestep: 1 d             # 原始数据为日级用电记录(每用户每日若干点)
+category: res             # 用电客户级(居民/小型商业)
+description: >
+  中国国家电网公司(SGCC)发布的现实用电客户数据集,用于窃电检测研究。
+  包含 42,372 个用电客户在 1,035 天内(2014-01-01 至 2016-10-31)
+  的用电量数据,带真实异常(窃电)标签。数据以 data.zip + data.z01
+  + data.z02 分卷压缩包形式提供,需一起下载解压。首次发表于论文
+  "Wide and Deep Convolutional Neural Networks for Electricity-Theft
+  Detection to Secure Smart Grids"(IEEE TII 2017,
+  DOI: 10.1109/TII.2017.2785963)。
+features:
+  - {raw: "power_series", unit: "kwh"}    # 用户用电量时间序列
+  - {raw: "label", unit: "0/1"}           # 异常(窃电)标签
+records: "42372 customers / 1035 days"
+format: "txt (分卷 zip, data.zip + data.z01 + data.z02)"
+paper_doi: "10.1109/TII.2017.2785963"
+notes: >
+  注意:原始仓库未附 LICENSE,许可状态不明确。如需纳入本项目,建议
+  联系原始作者确认使用/再分发条款,或在验收时与组长说明此风险。
+  第三方镜像 walawalagoose/Datasets-of-Electricity-Theft-Detection
+  标注为 MIT,但无法确认其与原数据的授权关系。

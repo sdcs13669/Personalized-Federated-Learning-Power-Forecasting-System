@@ -1,0 +1,30 @@
+dataset_id: steel_ind
+name: Steel Industry Energy Consumption (UCI / DAEWOO Steel)
+source_url: https://archive.ics.uci.edu/dataset/851/steel+industry+energy+consumption
+license:
+  name: Creative Commons Attribution 4.0 International (CC BY 4.0)
+  url: https://creativecommons.org/licenses/by/4.0/
+timestep: 15 min          # 原生采样间隔约 15 分钟
+category: ind             # 工业负荷
+description: >
+  韩国光阳 DAEWOO 钢铁有限公司的工业能耗数据集。
+  记录 35040 条,含工业电能消耗(Usage_kWh)、滞后/超前
+  无功功率、CO2 排放、功率因数、负荷类型等特征。
+  数据来源于云端采集系统与韩国电力公司(KEPCO)网站,
+  由 Sathishkumar V E 等人整理并发布于 UCI 机器学习库,
+  DOI: 10.24432/C52G8C。
+features:
+  - {raw: "date", unit: "date"}                          # 时间戳
+  - {raw: "Usage_kWh", unit: "kwh"}                      # 工业电能消耗
+  - {raw: "Lagging_Current_Reactive.Power_kVarh", unit: "kvarh"}
+  - {raw: "Leading_Current_Reactive_Power_kVarh", unit: "kvarh"}
+  - {raw: "CO2(tCO2)", unit: "ppm"}
+  - {raw: "Lagging_Current_Power_Factor", unit: "%"}
+  - {raw: "Leading_Current_Power_Factor", unit: "%"}
+  - {raw: "NSM", unit: "s"}                              # 距午夜秒数
+  - {raw: "Week_Status", unit: "category"}               # 周末/工作日
+  - {raw: "Day_of_week", unit: "category"}               # 星期几
+  - {raw: "Load_Type", unit: "category"}                 # 负荷类型
+records: 35040
+format: csv
+doi: "10.24432/C52G8C"

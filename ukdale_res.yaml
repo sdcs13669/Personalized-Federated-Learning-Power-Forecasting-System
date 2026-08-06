@@ -1,0 +1,14 @@
+dataset_id: ukdale_res
+name: UK Domestic Appliance-Level Electricity (UK-DALE)
+source_url: https://doi.org/10.5286/ukerc.edc.000001
+timestep: 6 s         # 原生采样间隔约 6 秒（总表另有 1 s 与 16 kHz 记录）
+category: res                    # res（居民 residential）
+description: >
+  英国 5 户住宅的整屋与逐电器功率数据，由 Imperial College London 的 Jack Kelly 等人采集，
+  数据期 2012-11-09 至 2015-01-05。UKERC Energy Data Centre / CEDA 存档公开提供，
+  CC BY 4.0。每户独立目录，每台电器一个 channel_nn.dat 时间序列文件；
+  大部分电器附 channel_nn_button_press.dat 开关事件记录。
+features:
+  - {raw: "time",              unit: "iso" }   # 时间戳
+  - {raw: "channel_nn",        unit: "w" }     # 各电器通道瞬时功率，W
+  - {raw: "channel_nn_button_press", unit: "binary" }  # 电器开关事件标记（可选）

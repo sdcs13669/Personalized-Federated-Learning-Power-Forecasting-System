@@ -1,0 +1,27 @@
+dataset_id: gx_res
+name: A Large-Scale Residential Load Dataset in a Southern Province of China (Guangxi)
+source_url: https://figshare.com/articles/dataset/The_provincial_shapefile_and_whole_database/26333452
+license:
+  name: MIT License
+  url: https://opensource.org/licenses/MIT
+timestep: 3600 s          # 原生采样间隔:小时级变压器负荷
+category: res             # 居民负荷(变压器/社区级)
+description: >
+  中国广西省 23 个居民社区、10 个城市的变压器级住宅电力负荷数据集,
+  覆盖 2022-2023 年,小时级采样。包含每小时变压器负荷、气象数据
+  (温度、湿度、极端天气事件记录)以及日历数据(节假日)。由广西大学
+  Bo Li 等团队采集整理,2025 年发表于 Scientific Data
+  (DOI: 10.1038/s41597-025-04766-7)。数据以 SQLite3 数据库
+  (Transformer_DB.db) 形式存放于 Figshare。
+features:
+  - {raw: "timestamp", unit: "datetime"}    # 时间戳
+  - {raw: "load", unit: "kwh"}              # 变压器负荷(小时级)
+  - {raw: "temperature", unit: "celsius"}   # 气温
+  - {raw: "humidity", unit: "%"}            # 相对湿度
+  - {raw: "community_id", unit: "id"}       # 社区标识
+records: 23 communities / 10 cities
+format: sqlite3 (Transformer_DB.db, 约 348 MB)
+doi: "10.6084/m9.figshare.26333452.v1"
+paper_doi: "10.1038/s41597-025-04766-7"
+code_url: "https://github.com/yuruotao/District-power"
+notes: 数据许可为 MIT,允许使用与再分发;论文本体为 CC BY-NC-ND。

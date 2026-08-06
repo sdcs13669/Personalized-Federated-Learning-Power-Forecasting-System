@@ -1,0 +1,22 @@
+dataset_id: lcl_res
+name: Low Carbon London (LCL) Smart Meter Data
+source_url: https://data.london.gov.uk/dataset/smartmeter-energy-use-data-in-london-households
+download_url: https://data.london.gov.uk/download/vqm0d/3527bf39-d93e-4071-8451-df2ade1ea4f2/LCL-FullData.zip
+downloaded_at: "2026-08-06"
+timestep: 1800 s      # 30分钟
+category: res         # 399户伦敦居民（官网5567为项目整体样本量）
+description: >
+  UK Power Networks主导的Low Carbon London项目。本公开子集
+  CC_LCL-FullData.csv含399户伦敦家庭2012年10月至2014年1月的智能电表读数，
+  30分钟采样，共1413万条记录。字段含用户ID、电价类型(Std/ToU)、时间戳、
+  半小时间隔用电量(kWh)。注意：官网描述5567户为项目整体样本量，
+  此公开ZIP子集实际含399户。
+  Std是“一口价”，全天电价固定；而ToU是“看时段定价”，不同时间电价不同。
+features:
+  - {raw: "LCLid", unit: "用户ID"}
+  - {raw: "stdorToU", unit: "电价类型 Std/ToU"}
+  - {raw: "DateTime", unit: "yyyy-mm-dd hh:mm:ss"}
+  - {raw: "KWH/hh", unit: "kWh/half hour"}
+license: "CC BY 4.0"
+license_url: https://creativecommons.org/licenses/by/4.0/
+citation: "UK Power Networks. SmartMeter Energy Consumption Data in London Households [Dataset]. London Datastore. https://data.london.gov.uk/dataset/smartmeter-energy-use-data-in-london-households"

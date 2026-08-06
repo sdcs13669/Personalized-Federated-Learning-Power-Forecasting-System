@@ -1,0 +1,20 @@
+dataset_id: tetouan_city
+name: Power Consumption of Tetouan City
+source_url: https://archive.ics.uci.edu/dataset/849/power+consumption+of+tetouan+city
+download_date: 2026-08-06
+timestep: 600 s       # 10 分钟
+category: mixed       # Zone1 工业区 / Zone2、3 居民商业区
+description: 摩洛哥 Tetouan 市三个配电网分区 2017-01 至 2018-12 的 10 分钟功率消耗及气象数据，无缺失值
+features:             # 原始特征
+  - {raw: "DateTime", unit: "iso"}
+  - {raw: "Temperature", unit: "C"}
+  - {raw: "Humidity", unit: "%"}
+  - {raw: "Wind Speed", unit: "m/s"}
+  - {raw: "general diffuse flows", unit: "W/m2"}
+  - {raw: "diffuse flows", unit: "W/m2"}
+  - {raw: "Zone 1 Power Consumption", unit: "W"}
+  - {raw: "Zone 2 Power Consumption", unit: "W"}
+  - {raw: "Zone 3 Power Consumption", unit: "W"}
+license: CC BY-NC-SA 4.0
+license_url: https://creativecommons.org/licenses/by/4.0/legalcode
+cite: Salam, A. & El Hibaoui, A. (2018). Power Consumption of Tetouan City [Dataset]. UCI Machine Learning Repository. https://doi.org/10.24432/C5B034

@@ -1,0 +1,25 @@
+dataset_id: household_res
+name: Individual household electric power consumption (UCI)
+source_url: https://archive.ics.uci.edu/dataset/235/individual+household+electric+power+consumption
+download_url: https://archive.ics.uci.edu/static/public/235/individual+household+electric+power+consumption.zip
+downloaded_at: "2026-08-06"
+timestep: 60 s        # 1分钟
+category: res         # 单个居民家庭
+description: >
+  法国某居民家庭2006年12月至2010年11月(47个月)的用电数据，1分钟采样，
+  共2075259条记录。含总有功/无功功率、电压、电流及三个分项计量(sub_metering)。
+  有功功率：是真正做功、把电能转化成我们所需能量（如光、热、动能）的部分。
+  无功功率：是不做功，但用于建立和维持电磁场、保障设备正常运行所必需的辅助能量,常作为输入特征
+features:
+  - {raw: "Date", unit: "dd/mm/yyyy"}
+  - {raw: "Time", unit: "hh:mm:ss"}
+  - {raw: "Global_active_power", unit: "kW"}
+  - {raw: "Global_reactive_power", unit: "kW"}
+  - {raw: "Voltage", unit: "V"}
+  - {raw: "Global_intensity", unit: "A"}
+  - {raw: "Sub_metering_1", unit: "Wh"}
+  - {raw: "Sub_metering_2", unit: "Wh"}
+  - {raw: "Sub_metering_3", unit: "Wh"}
+license: "CC BY 4.0"
+license_url: https://creativecommons.org/licenses/by/4.0/
+citation: "UCI Machine Learning Repository. Individual household electric power consumption [Dataset]. https://doi.org/10.24432/C58C86"

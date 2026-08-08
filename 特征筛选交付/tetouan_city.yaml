@@ -1,0 +1,54 @@
+# tetouan_city 清洗方案与质量报告
+meta:
+  dataset_id: tetouan_city
+  submitted_by: bi_minghao
+  reviewer: null
+  date: "2026-08-08"
+  script: scripts/clean_tetouan_city.py
+
+# ---- 清洗前：数据特征分析与方案 ----
+data_profile:
+  native_timestep: 600          # 10分钟
+  uniform: true
+  unit_power: "W"
+  timestamp_format: "m/d/yyyy h:mm"
+  missing_format: "无缺失"
+  negative_semantics: "无"
+  sequence_semantics: "城市三个配电网分区(Zone1工业/Zone2、3居民商业)"
+
+cleaning_plan:
+  target_timestep: 1800         # 统一30min
+  resample_method: "mean"
+  missing:
+    method: "linear_interp"
+    max_gap: 6
+  outlier:
+    physical_bounds: [0, 10000000]   # W，物理上限
+    statistical: "MAD_Z"
+    temporal: "diff_outlier"
+  features:
+    # ==== 特征筛选结果（§6，2026-08-08） ====
+    # 统计筛选：general_diffuse_flow<->diffuse_flow 相关系数0.879 中等偏高，
+    #          但 VIF 均<5，无强共线性，按"宁留勿删"原则保留
+    # 模型筛选：XGBoost+SHAP 中时间特征贡献最大；本地特征中 general_diffuse_flow
+    #          (SHAP 267) > humidity(157) > temperature(136) > diffuse_flow(115) > wind_speed(107)
+    # ⚠️ 待确认：category_id 清洗后为常量1，与《客户端数据划分方案》(Zone1→2/Zone2、3→0)不符
+    # ⚠️ 待确认：本csv同时含load_zone1/2/3三列，建模时按Zone切分为3个独立客户端（各用对应目标列）
+    drop_columns:
+      - "DateTime"                   # 时间戳，已派生时间特征
+    retain_columns:
+      - "temperature"                # 本地特征，保留（物理意义明确）
+      - "humidity"                   # 本地特征，保留
+      - "wind_speed"                 # 本地特征，保留
+      - "general_diffuse_flow"       # 本地特征，保留（SHAP贡献最高的气象特征）
+      - "diffuse_flow"               # 本地特征，保留（与general_diffuse_flow r=0.879但VIF<5）
+    # 注：load_zone1/2/3 为目标列，建模时按客户端各取一列；category_id 待与方案对齐
+  plan_reviewed: false
+
+# ---- 清洗后：质量指标 ----
+quality_metrics:
+  missing_rate: 0.0             # 重采样后无缺失
+  max_gap_steps: 0
+  outlier_ratio: 0.0
+  value_range_after: [6096.5, 52102.1]   # 三个Zone功率范围
+  residual_risks: "manifest标注覆盖至2018-12，实际数据仅到2017-09-09，已按实际截断；Zone按客户端划分见《客户端数据划分方案》；general_diffuse_flow与diffuse_flow相关性0.879，若需进一步降维可考虑合并"

@@ -1,0 +1,56 @@
+# lcl_res 清洗方案与质量报告
+
+meta:
+  dataset_id: "lcl_res"
+  submitted_by: "xxx（特征筛选负责人）"
+  reviewer: "xxx"
+  date: "2026-08-08"
+  script: "scripts/clean_lcl_res.py"
+
+# ---- 清洗前：数据特征分析与方案 ----
+data_profile:
+  native_timestep: 1800
+  uniform: true
+  unit_power: "kWh"
+  timestamp_format: "yyyy-mm-dd hh:mm:ss"
+  missing_format: "空字符串"
+  negative_semantics: "无"
+  sequence_semantics: "伦敦居民智能电表（399户，公开子集含216户有效序列）"
+
+cleaning_plan:
+  target_timestep: 1800
+  resample_method: "mean"
+  missing:
+    method: "linear_interp"
+    max_gap: 6
+  outlier:
+    physical_bounds: [0, 10]
+    statistical: "MAD_Z"
+    temporal: "diff_outlier"
+  features:
+    # ==== 特征筛选结果（§6，2026-08-08） ====
+    # 注：drop_columns 指"不用作模型特征"（建模时忽略），非从csv物理删除；
+    #     LCLid/datetime 仍保留在csv中作为客户端标识与时间索引
+    drop_columns:
+      - "LCLid"            # 用户ID：客户端划分标识，非模型特征（保留在csv但不入模型）
+      - "datetime"         # 时间戳：清洗后已派生时间特征，非模型特征（保留在csv作索引）
+      - "tariff_type"      # 本地特征常数列（全量全为0，无ToU用户），无信息量，剔除
+    retain_columns:
+      - "KWH"              # 目标负荷列（保留）
+      - "hour_sin"         # 公共特征，encoder输入
+      - "hour_cos"         # 公共特征，encoder输入
+      - "dow_sin"          # 公共特征，encoder输入
+      - "dow_cos"          # 公共特征，encoder输入
+      - "is_weekend"       # 公共特征，encoder输入（SHAP贡献为0，但保留作为公共特征）
+      - "month_sin"        # 公共特征，encoder输入
+      - "month_cos"        # 公共特征，encoder输入
+      - "category_id"      # 公共特征：类别编码（0=居民），联邦中跨数据集变化，保留
+  plan_reviewed: true
+
+# ---- 清洗后：质量指标 ----
+quality_metrics:
+  missing_rate: 0.00379
+  max_gap_steps: 6
+  outlier_ratio: 0.008
+  value_range_after: [0, 10]
+  residual_risks: "tariff_type在公开子集中全为常量（无ToU用户）已剔除；category_id虽本数据集内为常量(居民类)，但属公共特征保留；本数据集仅含居民类别，无法验证跨类别区分能力。"

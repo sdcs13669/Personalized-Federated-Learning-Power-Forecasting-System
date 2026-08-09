@@ -175,7 +175,7 @@ def clean() -> pd.DataFrame:
         vals = df[c].values.astype(np.float64)
         valid = np.where(~np.isnan(vals) & (vals > 0))[0]
         if len(valid) > 0 and valid[0] > 0:
-            df[c].iloc[:valid[0]] = np.nan
+            df.iloc[:valid[0], df.columns.get_loc(c)] = np.nan
 
     # ---- Clean target: diff IQR ----
     df[TARGET_COL], mr, mg, n_out = clean_column(
@@ -199,10 +199,11 @@ def clean() -> pd.DataFrame:
             df = df.drop(columns=[c])
             FEATURE_COLS.remove(c)
 
-    # ---- Cubic spline interpolation (all remaining columns, interior only) ----
+    # ---- Cubic spline interpolation + re-clip bounds (>0) ----
     for c in [TARGET_COL] + FEATURE_COLS:
         if c in df.columns:
             df[c] = df[c].interpolate(method="cubic", limit_area="inside")
+            df[c] = df[c].clip(0.0, None)
 
     df = df.reset_index()
     df = add_public_features(df)
@@ -213,9 +214,15 @@ def main() -> None:
     df = clean()
     out = PROC / f"{DATASET_ID}.csv"
     df.to_csv(out, index=False)
-    print(f"Wrote {out} ({len(df)} rows)")
-    print(f"  {TARGET_COL}: missing_rate={df[TARGET_COL].isna().mean():.4f} "
-          f"range=[{df[TARGET_COL].min():.4f}, {df[TARGET_COL].max():.4f}]")
+    data_cols = [c for c in df.columns if c not in
+                 {"datetime", "hour_sin", "hour_cos", "dow_sin", "dow_cos",
+                  "is_weekend", "month_sin", "month_cos", "category_id"}]
+    n_public = len(df.columns) - len(data_cols)
+    print(f"Wrote {out} ({len(df)} rows, "
+          f"{len(data_cols)} data + {n_public} public = {len(df.columns)} cols)")
+    for c in data_cols:
+        print(f"  {c}: missing_rate={df[c].isna().mean():.4f} "
+              f"range=[{df[c].min():.4f}, {df[c].max():.4f}]")
 
 
 if __name__ == "__main__":

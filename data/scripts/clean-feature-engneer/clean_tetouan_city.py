@@ -15,8 +15,8 @@ import pandas as pd
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-RAW = ROOT / "data" / "raw" / "tetouan_city"
-PROC = ROOT / "data" / "processed"
+RAW = ROOT /  "raw" / "tetouan_city"
+PROC = ROOT /  "processed"
 PROC.mkdir(exist_ok=True)
 
 DATASET_ID = "tetouan_city"
@@ -24,7 +24,7 @@ TARGET_TIMESTEP = 1800  # 30 min
 CATEGORY_ID = 1          # 配电网分区 (建模时 Zone1→2 工业, Zone2/3→0 居民)
 IQR_MULTIPLIER = 2.5
 ROLLING_WINDOW = 336   # 7 days @ 30min
-MAX_GAP_DROP = 48     # drop sequences with raw gap > 48 steps (24h)
+MAX_GAP_DROP = 72     # drop sequences with raw gap > 72 steps (24h)
 
 ZONE_TARGETS = {
     "Zone 1 Power Consumption": "load_zone1",
@@ -163,7 +163,7 @@ def clean() -> pd.DataFrame:
         vals = df[old_name].values.astype(np.float64)
         valid = np.where(~np.isnan(vals) & (vals > 0))[0]
         if len(valid) > 0 and valid[0] > 0:
-            df[old_name].iloc[:valid[0]] = np.nan
+            df.iloc[:valid[0], df.columns.get_loc(old_name)] = np.nan
 
     # ---- Clean targets: diff IQR ----
     for old_name, new_name in list(ZONE_TARGETS.items()):
@@ -191,11 +191,12 @@ def clean() -> pd.DataFrame:
                 df = df.drop(columns=[old_name])
                 del LOCAL_FEAT[old_name]
 
-    # ---- Cubic spline interpolation (all columns, interior only) ----
+    # ---- Cubic spline interpolation + re-clip bounds ----
     all_renamed = list(ZONE_TARGETS.values()) + list(LOCAL_FEAT.values())
     for c in all_renamed:
         if c in df.columns:
             df[c] = df[c].interpolate(method="cubic", limit_area="inside")
+            df[c] = df[c].clip(0.0, None)  # power / weather > 0
 
     df = df.reset_index()
     df = add_public_features(df)
@@ -211,10 +212,15 @@ def main() -> None:
     df = clean()
     out = PROC / f"{DATASET_ID}.csv"
     df.to_csv(out, index=False)
-    print(f"Wrote {out} ({len(df)} rows x {len(df.columns)} cols)")
-    for z in ZONE_TARGETS.values():
-        print(f"  {z}: missing_rate={df[z].isna().mean():.4f} "
-              f"range=[{df[z].min():.1f}, {df[z].max():.1f}]")
+    data_cols = [c for c in df.columns if c not in
+                 {"datetime", "hour_sin", "hour_cos", "dow_sin", "dow_cos",
+                  "is_weekend", "month_sin", "month_cos", "category_id"}]
+    n_public = len(df.columns) - len(data_cols)
+    print(f"Wrote {out} ({len(df)} rows, "
+          f"{len(data_cols)} data + {n_public} public = {len(df.columns)} cols)")
+    for c in data_cols:
+        print(f"  {c}: missing_rate={df[c].isna().mean():.4f} "
+              f"range=[{df[c].min():.4f}, {df[c].max():.4f}]")
 
 
 if __name__ == "__main__":

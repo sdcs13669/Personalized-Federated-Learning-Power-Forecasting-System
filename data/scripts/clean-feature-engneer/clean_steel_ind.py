@@ -14,8 +14,8 @@ import pandas as pd
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-RAW = ROOT / "data" / "raw" / "steel_ind"
-PROC = ROOT / "data" / "processed"
+RAW = ROOT /  "raw" / "steel_ind"
+PROC = ROOT /  "processed"
 PROC.mkdir(exist_ok=True)
 
 DATASET_ID = "steel_ind"
@@ -170,7 +170,7 @@ def clean() -> pd.DataFrame:
         vals = df[col].values.astype(np.float64)
         valid = np.where(~np.isnan(vals) & (vals > 0))[0]
         if len(valid) > 0 and valid[0] > 0:
-            df[col].iloc[:valid[0]] = np.nan
+            df.iloc[:valid[0], df.columns.get_loc(col)] = np.nan
 
     # ---- Clean target: diff IQR ----
     lo, hi = 0.0, float("inf")
@@ -203,10 +203,19 @@ def clean() -> pd.DataFrame:
             df = df.drop(columns=[col])
             FEATURE_COLS.remove(col)
 
-    # ---- Cubic spline interpolation (all numeric columns, interior only) ----
-    for c in [TARGET_COL] + FEATURE_COLS:
+    # ---- Cubic spline interpolation + re-clip bounds ----
+    interp_bounds = {
+        "Usage_kWh":                  (0.0, float("inf")),
+        "lagging_reactive_power":     (0.0, float("inf")),
+        "leading_reactive_power":     (0.0, float("inf")),
+        "co2":                        (0.0, float("inf")),
+        "lagging_pf":                 (0.0, 1.0),
+        "leading_pf":                 (0.0, 1.0),
+    }
+    for c, (lo, hi) in interp_bounds.items():
         if c in df.columns:
             df[c] = df[c].interpolate(method="cubic", limit_area="inside")
+            df[c] = df[c].clip(lo, hi)
 
     # ---- Encode categorical ----
     load_map = {"Light_Load": 0, "Medium_Load": 1, "Maximum_Load": 2}
@@ -228,9 +237,15 @@ def main() -> None:
     df = clean()
     out = PROC / f"{DATASET_ID}.csv"
     df.to_csv(out, index=False)
-    print(f"Wrote {out} ({len(df)} rows x {len(df.columns)} cols)")
-    print(f"Final Usage_kWh missing_rate={df['Usage_kWh'].isna().mean():.4f} "
-          f"range=[{df['Usage_kWh'].min():.2f}, {df['Usage_kWh'].max():.2f}]")
+    data_cols = [c for c in df.columns if c not in
+                 {"datetime", "hour_sin", "hour_cos", "dow_sin", "dow_cos",
+                  "is_weekend", "month_sin", "month_cos", "category_id"}]
+    n_public = len(df.columns) - len(data_cols)
+    print(f"Wrote {out} ({len(df)} rows, "
+          f"{len(data_cols)} data + {n_public} public = {len(df.columns)} cols)")
+    for c in data_cols:
+        print(f"  {c}: missing_rate={df[c].isna().mean():.4f} "
+              f"range=[{df[c].min():.4f}, {df[c].max():.4f}]")
 
 
 if __name__ == "__main__":

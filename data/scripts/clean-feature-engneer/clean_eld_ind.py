@@ -145,6 +145,7 @@ def clean() -> pd.DataFrame:
         if np.isnan(col).any():
             s = pd.Series(col)
             s = s.interpolate(method="cubic", limit_area="inside")
+            s = s.clip(0.0, None)  # physical: power > 0
             X[:, j] = s.values
 
     # ---- Step 3: public features ----
@@ -175,7 +176,8 @@ def main() -> None:
     df.to_csv(out, index=False)
     client_cols = [c for c in df.columns if c.startswith("MT_")]
     sub = df[client_cols]
-    print(f"Wrote {out} ({len(df)} rows x {len(df.columns)} cols)")
+    n_public = len(df.columns) - len(client_cols)
+    print(f"Wrote {out} ({len(df)} rows, {len(client_cols)} MT + {n_public} public = {len(df.columns)} cols)")
     print(f"Final missing_rate={sub.isna().mean().mean():.4f} "
           f"range=[{sub.min().min():.2f}, {sub.max().max():.2f}]")
 

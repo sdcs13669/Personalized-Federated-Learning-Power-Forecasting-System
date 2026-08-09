@@ -159,6 +159,7 @@ def process_batch(batch_df: pd.DataFrame) -> pd.DataFrame:
 
         # Cubic spline interpolation (interior gaps only)
         g["KWH"] = g["KWH"].interpolate(method="cubic", limit_area="inside")
+        g["KWH"] = g["KWH"].clip(0.0, None)  # physical: KWH > 0
 
         if lid == batch_df["LCLid"].unique()[0]:
             print(f"  example {lid}: IQR_outliers={n_out}, "
@@ -192,8 +193,15 @@ def main() -> None:
         df = pd.concat([pd.read_csv(p) for p in parts], ignore_index=True)
         out = PROC / f"{DATASET_ID}.csv"
         df.to_csv(out, index=False)
-        print(f"Merged {len(parts)} batches -> {out} ({len(df)} rows, "
-              f"{df['LCLid'].nunique()} users)")
+        n_data = len(df.columns) - 8  # LCLid + KWH + 7 public + 1 cat - actually just count
+        data_cols = [c for c in df.columns if c not in
+                     {"LCLid", "datetime", "hour_sin", "hour_cos", "dow_sin",
+                      "dow_cos", "is_weekend", "month_sin", "month_cos",
+                      "category_id"}]
+        n_public = len(df.columns) - len(data_cols)
+        print(f"Merged {len(parts)} batches -> {out}")
+        print(f"  {len(df)} rows, {df['LCLid'].nunique()} users, "
+              f"{len(data_cols)} data + {n_public} public = {len(df.columns)} cols")
         print(f"  KWH missing_rate={df['KWH'].isna().mean():.4f} "
               f"range=[{df['KWH'].min():.3f}, {df['KWH'].max():.3f}]")
         return

@@ -1,0 +1,74 @@
+# ============================================================
+# 联邦时序预测系统配置文档 v1.0
+# 时间粒度: 30分钟/步
+# 核心策略: TCN主模型(全局) + 本地修正网络(个性化)
+# ============================================================
+
+# 1. 全局默认基础配置
+global:
+  time_step_minutes: 30
+  input_window_steps: 1440    # 30天 × 48步/天
+  output_window_steps: 336    # 7天 × 48步/天
+  description: "输入过去30天(1440步)半小时级数据，一次性输出未来7天(336步)负荷预测"
+
+# ============================================================
+# 2. 主模型默认配置 (TCN / Informer) - 全局聚合
+# ============================================================
+main_model:
+  name: "TCN_Global"
+  input:
+    shape: [Batch, Feature_Num, 1440]
+    description: "包含目标负荷及全局时间特征(hour_sin, hour_cos等)"
+  output:
+    shape: [Batch, 336]
+    name: "Y_pre"
+    description: "主模型输出的未来336步初步预测值"
+
+# ============================================================
+# 3. 本地修正网络 (残差修正模型) 默认输入拼接配置
+# 注意: 本地特征均已明确为动态变量(随时间变化)
+# ============================================================
+residual_corrector:
+  name: "Local_Residual_Net"
+  input_sequence:
+    length: 336  # 三个部分长度均为336，沿特征维度拼接
+    feature_dim: 3 # 由以下三部分拼接组成
+
+    # --- 组成部分 A: 主模型输出 ---
+    - component: "Main_Model_Output"
+      source: "Y_pre (主模型直接输出)"
+      shape: [Batch, 336, 1]
+      description: "全局模型对未来的基准预测"
+
+    # --- 组成部分 B: 历史真实切片 (对齐窗口) ---
+    - component: "Recent_True_History"
+      source: "预测起点 t 之前 336 步的真实负荷值"
+      shape: [Batch, 336, 1]
+      description: "提供与预测期等长的近期真实波动模板，用于对比修正"
+
+    # --- 组成部分 C: 本地动态特征 (全部为外生变量) ---
+    - component: "Local_Dynamic_Features"
+      source: "过去336步的本地特征"
+      shape: [Batch, 336, D_dynamic]  # D_dynamic视具体数据集而定(如2~5维)
+
+
+  final_input_shape: [Batch, 336, (1 + 1 + D_dynamic)]
+  output:
+    shape: [Batch, 336, 3]  # 输出3个值
+    name: "E_corr_quantiles"
+    description: "修正网络生成的336步残差预测，分别为下分位数、中位数、上分位数"
+    quantiles: [0.1, 0.5, 0.9]  # 对应10%, 50%, 90%分位数
+
+# ============================================================
+# 4. 预测结果与损失函数配置
+# ============================================================
+prediction_result:
+  output:
+    shape: [Batch, 336, 3]
+    name: "Y_final_quantiles"
+    Y_final_formula: "Y_final_quantiles = Y_pre + E_corr_quantiles"
+    description: "最终预测结果包含三个分位数，可构建80%置信区间 [P10, P90]"
+
+loss_function:
+  name: "Quantile_Loss"  
+  description: "分位数损失函数，同时优化三个分位数的预测"

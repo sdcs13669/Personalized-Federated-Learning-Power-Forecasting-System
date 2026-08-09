@@ -1,162 +1,302 @@
+"""Two-stage federated TCN model: global point forecast + local residual correction.
+
+Stage 1 — :class:`GlobalTCN` (FedAvg aggregated):
+    Public features (time-derived + category) → TCN encoder → MLP decoder
+    → 336-step point forecast ``Y_pre``.
+
+Stage 2 — :class:`ResidualCorrector` (per-client, never shared):
+    ``Y_pre`` + recent history + local dynamic features → TCN
+    → 3-quantile residual corrections ``E_corr``.
+
+:class:`FedTCN` composes both stages so that
+    ``Y_final = Y_pre + E_corr``  (shape ``[B, 336, 3]``).
+"""
+
 import torch
 import torch.nn as nn
 
 from .tcn import TCNEncoder
-from .mlp import MLP
 
 
-class TCNM(nn.Module):
-    """Shared TCN encoder + local MLP prediction head.
+# ============================================================================
+# Stage 1: Global TCN main model
+# ============================================================================
 
-    The encoder extracts temporal features from public input features.  Its
-    output is flattened and concatenated with local features (if any) before
-    the head produces quantile forecasts.
+class GlobalTCN(nn.Module):
+    """TCN-based global model producing a single point forecast.
 
-    The prediction head is built lazily on the first forward pass so the
-    encoder's output sequence length does not need to be known up front.
+    Input ``(B, in_channels, input_steps)`` → output ``(B, pred_len)``.
+
+    Designed to be the federated encoder: only the public features flow
+    through this network, and its weights are aggregated via FedAvg.
 
     Parameters
     ----------
-    encoder_config : dict
-        Keyword arguments forwarded to :class:`TCNEncoder`.
-    head_hidden_dims : list[int]
-        Hidden layer sizes for the prediction head MLP.
+    in_channels : int
+        Number of public feature channels (e.g. 8: 7 time-derived + 1 category).
     pred_len : int
-        Number of future time steps to predict (e.g. 96 for 24 h @ 15 min).
-    num_quantiles : int
-        Number of quantiles to output (default 3 → P10, P50, P90).
-    local_feat_dim : int
-        Dimensionality of local-only features appended before the head.
-        Set to 0 when no local features are available.
-    head_activation : str
-        Activation for the head MLP (``relu``, ``gelu``, etc.).
-    head_dropout : float
-        Dropout rate for the head MLP.
-    head_use_batch_norm : bool
-        Whether the head MLP uses batch normalisation.
+        Forecast horizon in steps (e.g. 336 for 7 days @ 30 min).
+    input_steps : int
+        Input window length in steps (e.g. 1440 for 30 days @ 30 min).
+    hidden_channels : int | list[int]
+        Per-layer channel count for the TCN encoder.
+    out_channels : int
+        TCN encoder output channels.
+    num_layers : int
+        Number of TemporalBlocks.
+    kernel_size : int
+        Conv kernel size.
+    dilation_base : int
+        Dilation factor base.
+    dropout : float
+        Dropout rate in TCN blocks.
+    use_weight_norm : bool
+    use_batch_norm : bool
+    decoder_hidden : list[int]
+        Hidden sizes of the MLP that maps encoder summary → ``pred_len``.
     """
 
     def __init__(
         self,
-        encoder_config,
-        head_hidden_dims,
-        pred_len,
-        num_quantiles=3,
-        local_feat_dim=0,
-        head_activation="relu",
-        head_dropout=0.0,
-        head_use_batch_norm=False,
+        in_channels=8,
+        pred_len=336,
+        input_steps=1440,
+        hidden_channels=64,
+        out_channels=64,
+        num_layers=4,
+        kernel_size=3,
+        dilation_base=2,
+        dropout=0.2,
+        use_weight_norm=True,
+        use_batch_norm=True,
+        decoder_hidden=(256,),
     ):
         super().__init__()
-        self.encoder = TCNEncoder(**encoder_config)
+        self.in_channels = in_channels
         self.pred_len = pred_len
-        self.num_quantiles = num_quantiles
-        self.local_feat_dim = local_feat_dim
-        self.encoder_out_channels = encoder_config.get("out_channels", 64)
+        self.input_steps = input_steps
 
-        # Store head config; the actual MLP is built on first forward.
-        self.head_config = dict(
-            hidden_dims=head_hidden_dims,
-            out_features=num_quantiles * pred_len,
-            activation=head_activation,
-            dropout=head_dropout,
-            use_batch_norm=head_use_batch_norm,
+        self.encoder = TCNEncoder(
+            in_channels=in_channels,
+            hidden_channels=hidden_channels,
+            out_channels=out_channels,
+            num_layers=num_layers,
+            kernel_size=kernel_size,
+            dilation_base=dilation_base,
+            dropout=dropout,
+            use_weight_norm=use_weight_norm,
+            use_batch_norm=use_batch_norm,
         )
-        self.head = None
 
-    def _build_head(self, seq_len, device):
-        head_in_dim = self.encoder_out_channels * seq_len + self.local_feat_dim
-        self.head = MLP(in_features=head_in_dim, **self.head_config).to(device)
+        # Decoder: encoder summary → point forecast
+        dec_dims = [out_channels] + list(decoder_hidden) + [pred_len]
+        dec_layers = []
+        for i in range(len(dec_dims) - 1):
+            dec_layers.append(nn.Linear(dec_dims[i], dec_dims[i + 1]))
+            if i < len(dec_dims) - 2:
+                dec_layers.append(nn.ReLU())
+                dec_layers.append(nn.Dropout(dropout))
+        self.decoder = nn.Sequential(*dec_layers)
 
-    def forward(self, x_public, x_local=None):
+    def forward(self, x_public):
         """Forward pass.
 
         Parameters
         ----------
-        x_public : Tensor
-            Public features, shape (N, C_public, L).
-        x_local : Tensor or None
-            Local features, shape (N, C_local).  Ignored when
-            ``local_feat_dim == 0``.
+        x_public : Tensor, shape ``(B, in_channels, input_steps)``
+            Public features (time-derived + category_id).
 
         Returns
         -------
-        Tensor of shape (N, num_quantiles, pred_len).
+        Tensor of shape ``(B, pred_len)`` — point forecast ``Y_pre``.
         """
-        enc_out = self.encoder(x_public)  # (N, C_enc, L)
-        enc_flat = enc_out.flatten(1)      # (N, C_enc * L)
+        enc = self.encoder(x_public)                # (B, out_channels, input_steps)
+        summary = enc.mean(dim=-1)                   # (B, out_channels)  global pooling
+        y_pre = self.decoder(summary)                # (B, pred_len)
+        return y_pre
 
-        if self.head is None:
-            self._build_head(enc_out.size(-1), enc_flat.device)
-
-        if self.local_feat_dim > 0 and x_local is not None:
-            combined = torch.cat([enc_flat, x_local], dim=1)
-        else:
-            combined = enc_flat
-
-        out = self.head(combined)  # (N, num_quantiles * pred_len)
-        return out.view(out.size(0), self.num_quantiles, self.pred_len)
-
-    def get_encoder_state(self):
-        """Return encoder state dict for federated aggregation."""
-        return self.encoder.state_dict()
-
-    def get_head_state(self):
-        """Return local head state dict (never shared)."""
-        if self.head is None:
-            raise RuntimeError("Head not built yet; call forward first.")
-        return self.head.state_dict()
+    def state_dict_for_aggregation(self):
+        """Return state dict for federated aggregation (same as encoder)."""
+        return self.state_dict()
 
 
-class TCNMFixed(nn.Module):
-    """Like :class:`TCNM` but ``seq_len`` is required at
-    construction time so the head is built eagerly.  Prefer this when the
-    input sequence length is fixed and known up front."""
+# ============================================================================
+# Stage 2: Local residual corrector
+# ============================================================================
+
+class ResidualCorrector(nn.Module):
+    """Per-client residual correction network — **never shared**.
+
+    Takes three sources concatenated along the **feature** dimension:
+
+    - ``Y_pre``: global model point forecast       ``(B, pred_len, 1)``
+    - ``recent_history``: true target before forecast start ``(B, pred_len, 1)``
+    - ``x_local_dynamic``: local exogenous features ``(B, pred_len, D_local)``
+
+    and outputs 3-quantile residual corrections ``(B, pred_len, 3)``.
+
+    A lightweight TCN encoder maps the combined channels to three output
+    channels (one per quantile).
+
+    Parameters
+    ----------
+    pred_len : int
+        Forecast horizon (same as :class:`GlobalTCN` — 336).
+    local_feat_dim : int
+        Number of dynamic local feature channels *per dataset*
+        (0 for eld_ind, 1 for lcl_res, 5 for tetouan, 6 for steel_ind).
+    quantiles : tuple[float]
+        Quantile levels, default ``(0.1, 0.5, 0.9)``.
+    hidden_channels : int
+        Channels in the correction TCN.
+    num_layers : int
+        Correction TCN depth (keep shallow to avoid overfitting on small clients).
+    kernel_size : int
+    dropout : float
+    """
+
+    quantiles: tuple[float, ...]
 
     def __init__(
         self,
-        encoder_config,
-        seq_len,
-        head_hidden_dims,
-        pred_len,
-        num_quantiles=3,
+        pred_len=336,
         local_feat_dim=0,
-        head_activation="relu",
-        head_dropout=0.0,
-        head_use_batch_norm=False,
+        quantiles=(0.1, 0.5, 0.9),
+        hidden_channels=32,
+        num_layers=3,
+        kernel_size=5,
+        dropout=0.1,
     ):
         super().__init__()
-        self.encoder = TCNEncoder(**encoder_config)
         self.pred_len = pred_len
-        self.num_quantiles = num_quantiles
         self.local_feat_dim = local_feat_dim
+        self.quantiles = tuple(quantiles)
+        self.num_quantiles = len(quantiles)
 
-        enc_out_channels = encoder_config.get("out_channels", 64)
-        head_in_dim = enc_out_channels * seq_len + local_feat_dim
-
-        self.head = MLP(
-            in_features=head_in_dim,
-            hidden_dims=head_hidden_dims,
-            out_features=num_quantiles * pred_len,
-            activation=head_activation,
-            dropout=head_dropout,
-            use_batch_norm=head_use_batch_norm,
+        in_ch = 2 + local_feat_dim                       # Y_pre + history + local
+        self.corrector = TCNEncoder(
+            in_channels=in_ch,
+            hidden_channels=hidden_channels,
+            out_channels=self.num_quantiles,
+            num_layers=num_layers,
+            kernel_size=kernel_size,
+            dilation_base=2,
+            dropout=dropout,
+            use_weight_norm=False,
+            use_batch_norm=True,
         )
 
-    def forward(self, x_public, x_local=None):
-        enc_out = self.encoder(x_public)  # (N, C_enc, L)
-        enc_flat = enc_out.flatten(1)      # (N, C_enc * L)
+    def forward(self, y_pre, recent_history, x_local_dynamic=None):
+        """Forward pass.
 
-        if x_local is not None:
-            combined = torch.cat([enc_flat, x_local], dim=1)
-        else:
-            combined = enc_flat
+        Parameters
+        ----------
+        y_pre : Tensor, shape ``(B, pred_len)``
+            Global model point forecast.
+        recent_history : Tensor, shape ``(B, pred_len)``
+            True target values for ``pred_len`` steps *before* the forecast start.
+        x_local_dynamic : Tensor or None, shape ``(B, pred_len, D_local)``
+            Local dynamic features over the same ``pred_len`` window as
+            ``recent_history``.
 
-        out = self.head(combined)
-        return out.view(out.size(0), self.num_quantiles, self.pred_len)
+        Returns
+        -------
+        Tensor of shape ``(B, pred_len, num_quantiles)`` — residual corrections.
+        """
+        # Build (B, in_ch, pred_len) input
+        parts = [
+            y_pre.unsqueeze(1),                          # (B, 1, pred_len)
+            recent_history.unsqueeze(1),                 # (B, 1, pred_len)
+        ]
+        if self.local_feat_dim > 0 and x_local_dynamic is not None:
+            # x_local_dynamic: (B, pred_len, D_local) → (B, D_local, pred_len)
+            parts.append(x_local_dynamic.transpose(1, 2))
 
-    def get_encoder_state(self):
-        return self.encoder.state_dict()
+        x = torch.cat(parts, dim=1)                      # (B, in_ch, pred_len)
+        out = self.corrector(x)                           # (B, num_quantiles, pred_len)
+        return out.transpose(1, 2)                        # (B, pred_len, num_quantiles)
 
-    def get_head_state(self):
-        return self.head.state_dict()
+    def state_dict_for_local(self):
+        """Return state dict for local-only storage (never uploaded)."""
+        return self.state_dict()
+
+
+# ============================================================================
+# Stage 1 + 2 combined
+# ============================================================================
+
+class FedTCN(nn.Module):
+    """Complete federated TCN: global forecast + local residual correction.
+
+    Usage::
+
+        model = FedTCN(global_config, corrector_config)
+        y_final, y_pre, e_corr = model(x_public, recent_history, x_local)
+
+    ``get_global_state()`` / ``get_local_state()`` split the state for FL.
+    """
+
+    def __init__(self, global_config, corrector_config):
+        super().__init__()
+        self.global_model = GlobalTCN(**global_config)
+        self.corrector = ResidualCorrector(**corrector_config)
+
+    def forward(self, x_public, recent_history, x_local_dynamic=None):
+        """Full two-stage forward pass.
+
+        Parameters
+        ----------
+        x_public : Tensor, shape ``(B, in_channels, input_steps)``
+            Public features for the global model.
+        recent_history : Tensor, shape ``(B, pred_len)``
+            True target history of ``pred_len`` steps before forecast.
+        x_local_dynamic : Tensor or None, shape ``(B, pred_len, D_local)``
+            Local dynamic features.
+
+        Returns
+        -------
+        y_final : Tensor, shape ``(B, pred_len, num_quantiles)``
+            Final quantile forecast = Y_pre + E_corr.
+        y_pre : Tensor, shape ``(B, pred_len)``
+            Global point forecast (for baseline evaluation).
+        e_corr : Tensor, shape ``(B, pred_len, num_quantiles)``
+            Residual corrections (for interpretability).
+        """
+        y_pre = self.global_model(x_public)                       # (B, pred_len)
+        e_corr = self.corrector(y_pre, recent_history, x_local_dynamic)  # (B, pred_len, 3)
+        y_final = y_pre.unsqueeze(-1) + e_corr                     # (B, pred_len, 3)
+        return y_final, y_pre, e_corr
+
+    def get_global_state(self):
+        """State dict for the global model (FedAvg aggregated)."""
+        return self.global_model.state_dict()
+
+    def get_local_state(self):
+        """State dict for the local corrector (never shared)."""
+        return self.corrector.state_dict()
+
+
+# ============================================================================
+# Loss
+# ============================================================================
+
+def quantile_loss(y_true, y_pred_quantiles, quantiles=(0.1, 0.5, 0.9)):
+    """Pinball / quantile loss.
+
+    Parameters
+    ----------
+    y_true : Tensor, shape ``(B, pred_len)``
+        Ground-truth target.
+    y_pred_quantiles : Tensor, shape ``(B, pred_len, num_quantiles)``
+        Predicted quantile values.
+    quantiles : tuple[float]
+        Quantile levels.
+
+    Returns
+    -------
+    Scalar loss.
+    """
+    errors = y_true.unsqueeze(-1) - y_pred_quantiles            # (B, pred_len, nq)
+    q = torch.tensor(quantiles, device=y_pred_quantiles.device, dtype=y_pred_quantiles.dtype)
+    loss = torch.max((q - 1) * errors, q * errors)
+    return loss.mean()

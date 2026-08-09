@@ -1,7 +1,12 @@
 """Dataclass-based model configuration and factory functions.
 
-Every model parameter lives in a dataclass so it can be serialised, validated,
-and overridden without digging through constructor kwargs.
+Matches the architecture defined in ``fl_code/models/config.yaml``:
+
+    Global TCN (FedAvg)  →  Y_pre  (point forecast)
+         +
+    Local Residual Corrector (per-client)  →  E_corr  (quantile corrections)
+         =
+    Y_final = Y_pre + E_corr
 """
 
 from __future__ import annotations
@@ -10,15 +15,23 @@ from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 
-# ---------------------------------------------------------------------------
+# ============================================================================
 # Config dataclasses
-# ---------------------------------------------------------------------------
+# ============================================================================
 
 @dataclass
-class TCNConfig:
-    """Configuration for :class:`TCNEncoder`."""
+class GlobalTCNConfig:
+    """Configuration for :class:`GlobalTCN` — the federated point-forecast model.
 
-    in_channels: int
+    Matches ``config.yaml §2 main_model``.
+    """
+
+    # Input / output
+    in_channels: int = 8           # public features: 7 time-derived + 1 category
+    input_steps: int = 1440        # 30 days @ 30 min
+    pred_len: int = 336            # 7 days @ 30 min
+
+    # TCN encoder
     hidden_channels: int | list[int] = 64
     out_channels: int = 64
     num_layers: int = 4
@@ -28,99 +41,106 @@ class TCNConfig:
     use_weight_norm: bool = True
     use_batch_norm: bool = True
 
-    def to_dict(self):
-        return asdict(self)
-
-
-@dataclass
-class MLPConfig:
-    """Configuration for :class:`MLP`."""
-
-    in_features: int | None = None  # None → set at build time
-    hidden_dims: list[int] = field(default_factory=lambda: [128, 64])
-    out_features: int | None = None  # None → set at build time
-    activation: str = "relu"
-    dropout: float = 0.0
-    use_batch_norm: bool = False
+    # Decoder MLP (encoder summary → pred_len)
+    decoder_hidden: tuple[int, ...] = (256,)
 
     def to_dict(self):
         return asdict(self)
 
 
 @dataclass
-class EncoderHeadConfig:
-    """Configuration for :class:`EncoderHeadModel` / :class:`EncoderHeadModelFixed`.
+class CorrectorConfig:
+    """Configuration for :class:`ResidualCorrector` — per-client, never shared.
 
-    ``seq_len`` is optional; when provided the head is built eagerly
-    (:class:`EncoderHeadModelFixed`).  When ``None`` the head is built lazily
-    on the first forward pass.
+    Matches ``config.yaml §3 residual_corrector``.
     """
 
-    encoder: TCNConfig = field(default_factory=TCNConfig)
-    head: MLPConfig = field(default_factory=MLPConfig)
-    seq_len: int | None = None
-    pred_len: int = 96
-    num_quantiles: int = 3
-    local_feat_dim: int = 0
+    pred_len: int = 336
+    local_feat_dim: int = 0       # varies per dataset: 0..6
+    quantiles: tuple[float, ...] = (0.1, 0.5, 0.9)
+
+    # Correction TCN (lighter than the global encoder)
+    hidden_channels: int = 32
+    num_layers: int = 3
+    kernel_size: int = 5
+    dropout: float = 0.1
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass
+class FedTCNConfig:
+    """Top-level configuration combining global model + local corrector.
+
+    Matches the complete ``config.yaml``.
+    """
+
+    global_model: GlobalTCNConfig = field(default_factory=GlobalTCNConfig)
+    corrector: CorrectorConfig = field(default_factory=CorrectorConfig)
+
+    # Metadata (from config.yaml §1)
+    time_step_minutes: int = 30
+    input_window_steps: int = 1440
+    output_window_steps: int = 336
+    quantile_loss_quantiles: tuple[float, ...] = (0.1, 0.5, 0.9)
 
     def to_dict(self):
         d = asdict(self)
-        d["encoder"] = self.encoder.to_dict()
-        d["head"] = self.head.to_dict()
+        d["global_model"] = self.global_model.to_dict()
+        d["corrector"] = self.corrector.to_dict()
         return d
 
 
-# ---------------------------------------------------------------------------
+# ============================================================================
 # Factory functions
-# ---------------------------------------------------------------------------
+# ============================================================================
 
-def build_encoder_head(config: EncoderHeadConfig):
-    """Build an Encoder-Head model from a config dataclass.
+def build_fed_tcn(config: FedTCNConfig):
+    """Build the complete two-stage :class:`FedTCN`.
 
-    Returns :class:`EncoderHeadModelFixed` when ``config.seq_len`` is set,
-    otherwise :class:`EncoderHeadModel`.
+    Returns a :class:`FedTCN` instance ready for training.
     """
-    encoder_kwargs = _strip_none(config.encoder.to_dict())
+    from .tcnm import FedTCN
 
-    if config.seq_len is not None:
-        from .tcnm import EncoderHeadModelFixed
+    global_kwargs = config.global_model.to_dict()
+    corr_kwargs = config.corrector.to_dict()
 
-        return EncoderHeadModelFixed(
-            encoder_config=encoder_kwargs,
-            seq_len=config.seq_len,
-            head_hidden_dims=config.head.hidden_dims,
-            pred_len=config.pred_len,
-            num_quantiles=config.num_quantiles,
-            local_feat_dim=config.local_feat_dim,
-            head_activation=config.head.activation,
-            head_dropout=config.head.dropout,
-            head_use_batch_norm=config.head.use_batch_norm,
-        )
-
-    from .tcnm import EncoderHeadModel
-
-    return EncoderHeadModel(
-        encoder_config=encoder_kwargs,
-        head_hidden_dims=config.head.hidden_dims,
-        pred_len=config.pred_len,
-        num_quantiles=config.num_quantiles,
-        local_feat_dim=config.local_feat_dim,
-        head_activation=config.head.activation,
-        head_dropout=config.head.dropout,
-        head_use_batch_norm=config.head.use_batch_norm,
+    return FedTCN(
+        global_config=global_kwargs,
+        corrector_config=corr_kwargs,
     )
 
 
-def build_local_model(config: EncoderHeadConfig):
-    """Build a standalone local model (TCN + head, no federation split).
+def build_global_model(config: FedTCNConfig):
+    """Build only the global :class:`GlobalTCN` (for baseline evaluation).
 
-    Same architecture as the encoder-head model but intended as the baseline:
-    each client trains this entirely on its own data.  The model is identical
-    to the federated version so comparisons are fair — the only difference is
-    whether the encoder weights come from federation or from local SGD.
+    Returns a standalone :class:`GlobalTCN` that outputs ``Y_pre`` only,
+    without the local corrector.
     """
-    return build_encoder_head(config)
+    from .tcnm import GlobalTCN
+
+    kwargs = config.global_model.to_dict()
+    return GlobalTCN(**kwargs)
 
 
-def _strip_none(d: dict) -> dict:
-    return {k: v for k, v in d.items() if v is not None}
+def build_local_corrector(config: FedTCNConfig, local_feat_dim: int):
+    """Build only the :class:`ResidualCorrector` for a specific client.
+
+    Parameters
+    ----------
+    config : FedTCNConfig
+        Top-level config.
+    local_feat_dim : int
+        Number of local dynamic feature channels for *this* client
+        (differs by dataset: 0 for eld_ind, 1 for lcl_res, 5 for tetouan, 6 for steel_ind).
+
+    Returns
+    -------
+    :class:`ResidualCorrector`
+    """
+    from .tcnm import ResidualCorrector
+
+    kwargs = config.corrector.to_dict()
+    kwargs["local_feat_dim"] = local_feat_dim
+    return ResidualCorrector(**kwargs)

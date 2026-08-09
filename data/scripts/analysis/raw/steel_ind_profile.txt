@@ -1,0 +1,22 @@
+======================================================================
+steel_ind — Raw Data Profile
+======================================================================
+  Source rows (15min):  35040
+  After resample (30min): 17520
+  First valid idx:  0
+  Effective length: 17520
+  min:      1.765
+  p5:       2.755
+  q1:       3.225
+  median:   4.610
+  q3:       51.429
+  p95:      96.570
+  max:      149.705
+  max_gap (30min steps, zeros or NaN): 0
+
+--- Local features (raw, before resample) ---
+  Lagging_Current_Reactive.Power_kVarh: min=0.0000  q1=2.3000  median=5.0000  q3=22.6400  max=96.9100
+  Leading_Current_Reactive_Power_kVarh: min=0.0000  q1=0.0000  median=0.0000  q3=2.0900  max=27.7600
+  CO2(tCO2): min=0.0000  q1=0.0000  median=0.0000  q3=0.0200  max=0.0700
+  Lagging_Current_Power_Factor: min=0.0000  q1=63.3200  median=87.9600  q3=99.0225  max=100.0000
+  Leading_Current_Power_Factor: min=0.0000  q1=99.7000  median=100.0000  q3=100.0000  max=100.0000

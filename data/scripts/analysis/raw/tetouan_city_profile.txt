@@ -1,0 +1,17 @@
+======================================================================
+tetouan_city — Raw Data Profile
+======================================================================
+  Source rows (10min):  52416
+  After resample (30min): 17472
+
+--- Zone power (targets, after resample, from first non-zero) ---
+  Zone 1: first_valid=0  eff_len=17472  min=13915.9  q1=26335.5  median=32285.9  q3=37314.8  max=52102.1  max_gap=0
+  Zone 2: first_valid=0  eff_len=17472  min=8674.9  q1=16995.1  median=20836.4  q3=24725.1  max=36424.5  max_gap=0
+  Zone 3: first_valid=0  eff_len=17472  min=6096.5  q1=13148.9  median=16414.2  q3=21648.2  max=47510.0  max_gap=0
+
+--- Weather features (after resample, from first valid) ---
+  Temperature: first_valid=0  eff_len=17472  min=3.41  q1=14.41  median=18.77  q3=22.88  max=39.79  max_gap=0
+  Humidity: first_valid=0  eff_len=17472  min=11.86  q1=58.34  median=69.87  q3=81.37  max=94.77  max_gap=0
+  Wind Speed: first_valid=0  eff_len=17472  min=0.05  q1=0.08  median=0.09  q3=4.92  max=6.02  max_gap=0
+  general diffuse flows: first_valid=0  eff_len=17472  min=0.01  q1=0.06  median=5.73  q3=323.37  max=1049.00  max_gap=0
+  diffuse flows: first_valid=0  eff_len=17472  min=0.03  q1=0.12  median=5.04  q3=103.93  max=893.67  max_gap=0

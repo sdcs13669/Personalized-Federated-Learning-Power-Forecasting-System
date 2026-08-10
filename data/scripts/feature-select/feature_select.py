@@ -133,10 +133,8 @@ def vif_report(df: pd.DataFrame, features: list[str]) -> dict:
 # ---------------------------------------------------------------------------
 
 def _chrono_split(df: pd.DataFrame, features: list[str], target: str):
-    """Chronological 70/15/15 split (no shuffle)."""
+    """Chronological 80/20 split (no shuffle, no validation set)."""
     n = len(df)
-    train_end = int(n * 0.70)
-    val_end = int(n * 0.85)
 
     X_all = df[features].copy()
     y_all = df[target].copy()
@@ -147,21 +145,18 @@ def _chrono_split(df: pd.DataFrame, features: list[str], target: str):
     y_all = y_all[valid]
     # Re-align chronological indices
     n_valid = len(y_all)
-    train_end = int(n_valid * 0.70)
-    val_end = int(n_valid * 0.85)
+    train_end = int(n_valid * 0.80)
 
     X_train = X_all.iloc[:train_end]
     y_train = y_all.iloc[:train_end]
-    X_val = X_all.iloc[train_end:val_end]
-    y_val = y_all.iloc[train_end:val_end]
-    X_test = X_all.iloc[val_end:]
-    y_test = y_all.iloc[val_end:]
+    X_test = X_all.iloc[train_end:]
+    y_test = y_all.iloc[train_end:]
 
-    return X_train, X_val, X_test, y_train, y_val, y_test, features
+    return X_train, X_test, y_train, y_test, features
 
 
-def _train_xgboost(X_train, y_train, X_val, y_val):
-    """Train XGBoost regressor with early stopping."""
+def _train_xgboost(X_train, y_train):
+    """Train XGBoost regressor (fixed estimators, no early stopping)."""
     model = xgb.XGBRegressor(
         n_estimators=500,
         max_depth=6,
@@ -169,14 +164,9 @@ def _train_xgboost(X_train, y_train, X_val, y_val):
         subsample=0.8,
         colsample_bytree=0.8,
         random_state=42,
-        early_stopping_rounds=20,
         n_jobs=-1,
     )
-    model.fit(
-        X_train, y_train,
-        eval_set=[(X_val, y_val)],
-        verbose=False,
-    )
+    model.fit(X_train, y_train, verbose=False)
     return model
 
 
@@ -399,25 +389,21 @@ def main():
 
     # -- 2. XGBoost training --
     print("\n-- XGBoost training --")
-    X_train, X_val, X_test, y_train, y_val, y_test, feature_list = _chrono_split(
+    X_train, X_test, y_train, y_test, feature_list = _chrono_split(
         df, features, target)
 
-    print(f"  Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
+    print(f"  Train: {len(X_train)}, Test: {len(X_test)}")
 
-    model = _train_xgboost(X_train, y_train, X_val, y_val)
+    model = _train_xgboost(X_train, y_train)
     y_pred = model.predict(X_test)
 
     mae = mean_absolute_error(y_test, y_pred)
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
     r2 = r2_score(y_test, y_pred)
-    n_est = getattr(model, "best_iteration", None)
-    if n_est is None:
-        n_est = model.get_booster().best_ntree_limit
     metrics = {
         "mae": round(float(mae), 4),
         "rmse": round(float(rmse), 4),
         "r2": round(float(r2), 4),
-        "n_estimators_used": int(n_est),
     }
     print(f"  MAE={mae:.4f}, RMSE={rmse:.4f}, R2={r2:.4f}")
 
@@ -427,7 +413,6 @@ def main():
         "learning_rate": 0.05,
         "subsample": 0.8,
         "colsample_bytree": 0.8,
-        "early_stopping_rounds": 20,
     }
 
     # -- 3. SHAP analysis --

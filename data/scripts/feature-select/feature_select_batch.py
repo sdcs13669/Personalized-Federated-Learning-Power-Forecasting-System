@@ -69,15 +69,13 @@ def _train_and_shap(X, y) -> tuple[dict, float]:
         return {}, float("nan")
 
     n = len(y_valid)
-    train_end = int(n * 0.70)
-    val_end = int(n * 0.85)
+    train_end = int(n * 0.80)
 
     X_train, y_train = X_valid[:train_end], y_valid[:train_end]
-    X_val, y_val = X_valid[train_end:val_end], y_valid[train_end:val_end]
-    X_test, y_test = X_valid[val_end:], y_valid[val_end:]
+    X_test, y_test = X_valid[train_end:], y_valid[train_end:]
 
     model = xgb.XGBRegressor(**XGB_PARAMS)
-    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+    model.fit(X_train, y_train, verbose=False)
 
     y_pred = model.predict(X_test)
     ss_res = np.sum((y_test - y_pred) ** 2)

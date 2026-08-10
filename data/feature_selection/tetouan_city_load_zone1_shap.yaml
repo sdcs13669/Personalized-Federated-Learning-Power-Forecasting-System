@@ -1,0 +1,205 @@
+# tetouan_city/load_zone1 XGBoost+SHAP 特征筛选报告
+# 自动生成于 2026-08-10 11:17
+
+meta:
+  dataset_id: tetouan_city
+  name: "Tetouan City Power Consumption (UCI)"
+  category: "城市配电网（Zone1=工业区）"
+  target: load_zone1
+  target_meaning: "Zone1配电网总负荷（W），覆盖得土安市工业区域"
+  script: scripts/feature-select/feature_select.py
+  n_features: 13
+  n_samples: 17472
+  timestep: 1800  # 30min
+
+# ---- 1. 统计筛选 ----
+statistical:
+  constants: ['category_id']
+  high_correlation_pairs:
+    []
+    note: "general_diffuse_flow 与 diffuse_flow 相关系数0.879，但VIF均<5，按'宁留勿删'保留"
+  vif:
+    temperature: 7.03
+    humidity: 1.81
+    wind_speed: 1.50
+    general_diffuse_flow: 3.48
+    diffuse_flow: 1.70
+    hour_sin: 1.46
+    hour_cos: 2.92
+    dow_sin: 2.77
+    dow_cos: 1.10
+    is_weekend: 2.87
+    month_sin: 1.43
+    month_cos: 5.09
+  missing_rate:
+    temperature: 0.0001
+    humidity: 0.0
+    wind_speed: 0.0
+    general_diffuse_flow: 0.0
+    diffuse_flow: 0.0
+    hour_sin: 0.0
+    hour_cos: 0.0
+    dow_sin: 0.0
+    dow_cos: 0.0
+    is_weekend: 0.0
+    month_sin: 0.0
+    month_cos: 0.0
+    category_id: 0.0
+
+# ---- 2. XGBoost 性能 ----
+xgb_performance:
+  mae: 2727.73
+  rmse: 3080.17
+  r2: 0.7363
+  n_estimators_used: 63
+  note: "R2=0.74，公共+气象特征对工业区负荷预测效果良好"
+  params: {'n_estimators': 500, 'max_depth': 6, 'learning_rate': 0.05, 'subsample': 0.8, 'colsample_bytree': 0.8, 'early_stopping_rounds': 20}
+
+# ---- 3. SHAP 特征重要性（含单位和含义） ----
+shap_importance:
+  hour_sin:
+    shap: 4370.79
+    unit: "无量纲（sin编码）"
+    meaning: "小时正弦编码（0→23时映射到[-1,1]），工业区日内负荷模式"
+    type: "公共特征"
+  hour_cos:
+    shap: 1163.86
+    unit: "无量纲（cos编码）"
+    meaning: "小时余弦编码（0→23时映射到[-1,1]），与hour_sin互补"
+    type: "公共特征"
+  month_cos:
+    shap: 953.99
+    unit: "无量纲（cos编码）"
+    meaning: "月份余弦编码（1→12月映射到[-1,1]），季节性负荷变化"
+    type: "公共特征"
+  temperature:
+    shap: 726.77
+    unit: "摄氏度（°C）"
+    meaning: "气温，工业区负荷受温度影响（制冷/取暖设备）"
+    type: "本地特征"
+  dow_sin:
+    shap: 325.72
+    unit: "无量纲（sin编码）"
+    meaning: "星期正弦编码（周一→周日映射到[-1,1]）"
+    type: "公共特征"
+  general_diffuse_flow:
+    shap: 324.89
+    unit: "W/m²"
+    meaning: "总散射辐照度，反映日照强度对工业用电的影响"
+    type: "本地特征"
+  month_sin:
+    shap: 266.34
+    unit: "无量纲（sin编码）"
+    meaning: "月份正弦编码（1→12月映射到[-1,1]）"
+    type: "公共特征"
+  diffuse_flow:
+    shap: 243.69
+    unit: "W/m²"
+    meaning: "散射辐照度分量，与general_diffuse_flow相关(r=0.879)但提供增量信息"
+    type: "本地特征"
+  dow_cos:
+    shap: 116.53
+    unit: "无量纲（cos编码）"
+    meaning: "星期余弦编码（周一→周日映射到[-1,1]）"
+    type: "公共特征"
+  humidity:
+    shap: 116.08
+    unit: "%（相对湿度）"
+    meaning: "相对湿度，影响空调/除湿设备负荷"
+    type: "本地特征"
+  wind_speed:
+    shap: 93.36
+    unit: "m/s"
+    meaning: "风速，影响建筑散热和通风负荷"
+    type: "本地特征"
+  is_weekend:
+    shap: 63.49
+    unit: "二值（0/1）"
+    meaning: "周末标志（周六/周日=1，工作日=0），工业区周末负荷显著下降"
+    type: "公共特征"
+  category_id:
+    shap: 0.00
+    unit: "类别编码（常量1）"
+    meaning: "数据集类别编码，本数据集内为常量（⚠️ 与客户端划分方案不一致）"
+    type: "公共特征"
+
+# ---- 特征分类 ----
+feature_classification:
+  public_features:
+    - hour_sin
+    - hour_cos
+    - dow_sin
+    - dow_cos
+    - is_weekend
+    - month_sin
+    - month_cos
+    - category_id
+    note: "以上8个为固定encoder输入通道，跨所有数据集共享（§5.2.1）。不可剔除。"
+  local_features:
+    - temperature
+    - humidity
+    - wind_speed
+    - general_diffuse_flow
+    - diffuse_flow
+    note: "5维气象特征，仅本城市可用，进入残差修正器的 D_dynamic 输入。全部保留。"
+
+# ---- 4. 筛选建议 ----
+recommendations:
+  drop:
+    - feature: category_id
+      shap: 0.000
+      reason: "本数据集内为常量，SHAP贡献=0。但联邦跨数据集时必须保留。⚠️ 当前category_id=1，与《客户端数据划分方案》规定的Zone1→2不一致，需对齐。"
+      action: "单数据集分析标记drop，联邦训练时恢复为encoder输入。类别编码需与方案对齐后重新生成。"
+  retain:
+    - feature: temperature
+      shap: 726.77
+      type: "本地特征"
+      reason: "SHAP贡献第4，本地特征中排第1（726.77）。气温是影响工业区负荷的最重要气象因子（制冷/取暖设备）。进入残差修正器。"
+    - feature: general_diffuse_flow
+      shap: 324.89
+      type: "本地特征"
+      reason: "SHAP贡献第6，本地特征中排第2。总散射辐照度反映日照强度，工业厂房照明和温控受日照影响。进入残差修正器。"
+    - feature: diffuse_flow
+      shap: 243.69
+      type: "本地特征"
+      reason: "SHAP贡献第8，本地特征中排第3。虽与general_diffuse_flow相关(r=0.879)，但VIF<5，提供增量信息。按'宁留勿删'保留。进入残差修正器。"
+    - feature: humidity
+      shap: 116.08
+      type: "本地特征"
+      reason: "SHAP贡献第10，本地特征中排第4。相对湿度影响空调除湿负荷。进入残差修正器。"
+    - feature: wind_speed
+      shap: 93.36
+      type: "本地特征"
+      reason: "SHAP贡献第11，本地特征中排第5。风速影响建筑散热。贡献虽低但有物理意义，按'宁留勿删'保留。进入残差修正器。"
+    - feature: hour_sin
+      shap: 4370.79
+      type: "公共特征"
+      reason: "SHAP贡献最高（4371），远超其他特征。工业区日内负荷模式极其规律。encoder固定输入。"
+    - feature: hour_cos
+      shap: 1163.86
+      type: "公共特征"
+      reason: "SHAP贡献第2。与hour_sin互补编码日内周期。encoder固定输入。"
+    - feature: month_cos
+      shap: 953.99
+      type: "公共特征"
+      reason: "SHAP贡献第3。季节性模式。encoder固定输入。"
+    - feature: dow_sin
+      shap: 325.72
+      type: "公共特征"
+      reason: "工作日/周末差异。encoder固定输入。"
+    - feature: month_sin
+      shap: 266.34
+      type: "公共特征"
+      reason: "与month_cos互补。encoder固定输入。"
+    - feature: dow_cos
+      shap: 116.53
+      type: "公共特征"
+      reason: "与dow_sin互补。encoder固定输入。"
+    - feature: is_weekend
+      shap: 63.49
+      type: "公共特征"
+      reason: "工业区周末效应。贡献虽低，但encoder固定输入。"
+  note: >
+    5维本地气象特征全部保留。残差修正器 D_dynamic=5。
+    8个公共特征全部进入Global TCN encoder。
+    ⚠️ category_id需与《客户端数据划分方案》对齐：Zone1应为2（工业），当前清洗结果为1。

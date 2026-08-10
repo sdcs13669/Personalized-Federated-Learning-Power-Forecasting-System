@@ -1,0 +1,120 @@
+# eld_ind 聚合 SHAP 特征重要性报告
+# 自动生成于 2026-08-10 11:36
+# 对 326 个目标序列逐列 XGBoost+SHAP 后取均值
+
+meta:
+  dataset_id: eld_ind
+  name: "ElectricityLoadDiagrams 2011-2014 (UCI)"
+  category: "工业/变压器负载"
+  script: scripts/feature-select/feature_select_batch.py
+  n_targets_total: 361
+  n_targets_processed: 326
+  n_targets_failed: 0
+  max_nan_rate_filter: 0.5
+  n_features: 8
+  n_rows: 70129
+  timestep: 1800  # 30min
+
+aggregate_performance:
+  r2_mean: 0.4623
+  r2_median: 0.7289
+  note: "R2 高方差：中位数0.73说明多数变压器可被时间特征较好预测，均值0.46被少数难预测序列拉低"
+
+# ---- 各特征 SHAP 均值与标准差 ----
+aggregate_shap_importance:
+  hour_sin:
+    mean: 182.680912
+    std: 1380.265535
+    unit: "无量纲（sin编码）"
+    meaning: "小时正弦编码（0→23时映射到[-1,1]）"
+    type: "公共特征"
+  hour_cos:
+    mean: 91.643515
+    std: 476.901313
+    unit: "无量纲（cos编码）"
+    meaning: "小时余弦编码（0→23时映射到[-1,1]）"
+    type: "公共特征"
+  month_cos:
+    mean: 91.080860
+    std: 916.043010
+    unit: "无量纲（cos编码）"
+    meaning: "月份余弦编码（1→12月映射到[-1,1]），捕捉年周期性"
+    type: "公共特征"
+  month_sin:
+    mean: 29.829330
+    std: 304.925112
+    unit: "无量纲（sin编码）"
+    meaning: "月份正弦编码（1→12月映射到[-1,1]）"
+    type: "公共特征"
+  dow_sin:
+    mean: 7.778044
+    std: 21.183432
+    unit: "无量纲（sin编码）"
+    meaning: "星期正弦编码（周一→周日映射到[-1,1]）"
+    type: "公共特征"
+  dow_cos:
+    mean: 3.687621
+    std: 15.291665
+    unit: "无量纲（cos编码）"
+    meaning: "星期余弦编码（周一→周日映射到[-1,1]）"
+    type: "公共特征"
+  is_weekend:
+    mean: 1.951999
+    std: 6.581494
+    unit: "二值（0/1）"
+    meaning: "周末标志（周六/周日=1，工作日=0）"
+    type: "公共特征"
+  category_id:
+    mean: 0.000000
+    std: 0.000000
+    unit: "类别编码（常量1）"
+    meaning: "数据集类别编码（1=变压器/工业），本数据集内为常量"
+    type: "公共特征"
+
+# ---- 特征分类 ----
+feature_classification:
+  public_features:
+    - hour_sin
+    - hour_cos
+    - dow_sin
+    - dow_cos
+    - is_weekend
+    - month_sin
+    - month_cos
+    - category_id
+    note: "以上8个为固定encoder输入通道，跨所有数据集共享（§5.2.1）。即使SHAP贡献低也不剔除，因为联邦学习中不同数据集的同一特征承载不同信息。"
+  local_features:
+    []
+    note: "本数据集为宽表格式（361列MT_XXX均为目标负荷），无本地动态特征。建模时残差修正器的 D_dynamic=0。"
+
+# ---- 筛选建议 ----
+recommendations:
+  drop:
+    - feature: category_id
+      reason: "本数据集内为常量（全为1），SHAP贡献=0。但联邦跨数据集时必须保留，此处仅标记为'单数据集内无信息'。"
+      action: "单数据集分析标记drop，联邦训练时恢复为encoder输入"
+  retain:
+    - feature: hour_sin
+      mean_shap: 182.68
+      reason: "SHAP贡献最高，电力负荷的小时周期性是最强信号。公共特征，encoder固定输入。"
+    - feature: hour_cos
+      mean_shap: 91.64
+      reason: "SHAP贡献第2，与hour_sin互补编码日内周期。公共特征，encoder固定输入。"
+    - feature: month_cos
+      mean_shap: 91.08
+      reason: "SHAP贡献第3（与hour_cos接近），捕捉工业负荷的季节性波动。公共特征，encoder固定输入。"
+    - feature: month_sin
+      mean_shap: 29.83
+      reason: "SHAP贡献第4，与month_cos互补编码年周期。公共特征，encoder固定输入。"
+    - feature: dow_sin
+      mean_shap: 7.78
+      reason: "SHAP贡献第5，工业负荷工作日/周末差异。公共特征，encoder固定输入。"
+    - feature: dow_cos
+      mean_shap: 3.69
+      reason: "SHAP贡献第6，与dow_sin互补。公共特征，encoder固定输入。"
+    - feature: is_weekend
+      mean_shap: 1.95
+      reason: "SHAP贡献第7，单独编码周末效应。公共特征，encoder固定输入（即使贡献低）。"
+  note: >
+    本数据集无本地特征可选。8个公共特征全部进入Global TCN encoder。
+    残差修正器无本地动态特征输入（D_dynamic=0），仅使用 Y_pre + 历史336步真值。

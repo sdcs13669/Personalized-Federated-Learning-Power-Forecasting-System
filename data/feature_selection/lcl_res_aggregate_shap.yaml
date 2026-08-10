@@ -1,0 +1,124 @@
+# lcl_res 聚合 SHAP 特征重要性报告
+# 自动生成于 2026-08-10 11:40
+# 对 321 个目标序列逐列 XGBoost+SHAP 后取均值
+
+meta:
+  dataset_id: lcl_res
+  name: "Low Carbon London smart meter (London Datastore)"
+  category: "居民用电"
+  script: scripts/feature-select/feature_select_batch.py
+  n_targets_total: 321
+  n_targets_processed: 321
+  n_targets_failed: 0
+  max_nan_rate_filter: 0.5
+  n_features: 8
+  n_rows: 39727
+  timestep: 1800  # 30min
+
+aggregate_performance:
+  r2_mean: 0.1280
+  r2_median: 0.2236
+  note: "R2 均值仅0.13，时间特征对居民用电解释力弱——居民用电高度随机、个体差异大，验证了个性化残差修正器的必要性"
+
+# ---- 各特征 SHAP 均值与标准差 ----
+aggregate_shap_importance:
+  hour_sin:
+    mean: 0.057938
+    std: 0.058181
+    unit: "无量纲（sin编码）"
+    meaning: "小时正弦编码（0→23时映射到[-1,1]），捕捉日内用电高峰/低谷"
+    type: "公共特征"
+  month_cos:
+    mean: 0.038994
+    std: 0.066166
+    unit: "无量纲（cos编码）"
+    meaning: "月份余弦编码（1→12月映射到[-1,1]），捕捉冬夏季节性差异"
+    type: "公共特征"
+  hour_cos:
+    mean: 0.036127
+    std: 0.052147
+    unit: "无量纲（cos编码）"
+    meaning: "小时余弦编码（0→23时映射到[-1,1]），与hour_sin互补"
+    type: "公共特征"
+  month_sin:
+    mean: 0.012662
+    std: 0.017534
+    unit: "无量纲（sin编码）"
+    meaning: "月份正弦编码（1→12月映射到[-1,1]），与month_cos互补"
+    type: "公共特征"
+  dow_sin:
+    mean: 0.010127
+    std: 0.010870
+    unit: "无量纲（sin编码）"
+    meaning: "星期正弦编码（周一→周日映射到[-1,1]）"
+    type: "公共特征"
+  dow_cos:
+    mean: 0.004433
+    std: 0.003846
+    unit: "无量纲（cos编码）"
+    meaning: "星期余弦编码（周一→周日映射到[-1,1]）"
+    type: "公共特征"
+  is_weekend:
+    mean: 0.002397
+    std: 0.003231
+    unit: "二值（0/1）"
+    meaning: "周末标志（周六/周日=1，工作日=0），居民周末用电模式与工作日差异小"
+    type: "公共特征"
+  category_id:
+    mean: 0.000000
+    std: 0.000000
+    unit: "类别编码（常量0）"
+    meaning: "数据集类别编码（0=居民），本数据集内为常量"
+    type: "公共特征"
+
+# ---- 特征分类 ----
+feature_classification:
+  public_features:
+    - hour_sin
+    - hour_cos
+    - dow_sin
+    - dow_cos
+    - is_weekend
+    - month_sin
+    - month_cos
+    - category_id
+    note: "以上8个为固定encoder输入通道，跨所有数据集共享（§5.2.1）。即使SHAP贡献低也不剔除，因为联邦学习中不同数据集的同一特征承载不同信息。"
+  local_features:
+    []
+    note: "本数据集为宽表格式（321列MACXXXXXX均为目标负荷），无本地动态特征。已剔除常数列 tariff_type（全量=0，无ToU用户）。建模时残差修正器的 D_dynamic=0。"
+
+# ---- 筛选建议 ----
+recommendations:
+  drop:
+    - feature: tariff_type
+      reason: "常数列（全量=0，无分时电价用户），无信息量。已在清洗阶段剔除。"
+      status: "已剔除"
+    - feature: category_id
+      reason: "本数据集内为常量（全为0），SHAP贡献=0。但联邦跨数据集时必须保留，此处仅标记为'单数据集内无信息'。"
+      action: "单数据集分析标记drop，联邦训练时恢复为encoder输入"
+  retain:
+    - feature: hour_sin
+      mean_shap: 0.0579
+      reason: "SHAP贡献最高。居民用电日内模式（早晚高峰）是最主要的周期性信号。公共特征，encoder固定输入。"
+    - feature: month_cos
+      mean_shap: 0.0390
+      reason: "SHAP贡献第2。伦敦居民冬季取暖用电显著高于夏季，月份余弦捕捉此季节性。公共特征，encoder固定输入。"
+    - feature: hour_cos
+      mean_shap: 0.0361
+      reason: "SHAP贡献第3。与hour_sin互补编码日内周期。公共特征，encoder固定输入。"
+    - feature: month_sin
+      mean_shap: 0.0127
+      reason: "SHAP贡献第4。与month_cos互补编码年周期。公共特征，encoder固定输入。"
+    - feature: dow_sin
+      mean_shap: 0.0101
+      reason: "SHAP贡献第5。居民用电存在微弱的工作日/周末差异。公共特征，encoder固定输入。"
+    - feature: dow_cos
+      mean_shap: 0.0044
+      reason: "SHAP贡献第6。与dow_sin互补。公共特征，encoder固定输入。"
+    - feature: is_weekend
+      mean_shap: 0.0024
+      reason: "SHAP贡献接近0（与手动分析结论一致）。伦敦居民周末与工作日用电模式差异极小。公共特征，encoder固定输入（即使贡献低，跨数据集可能有信息）。"
+  note: >
+    本数据集无本地特征可选。8个公共特征全部进入Global TCN encoder。
+    残差修正器无本地动态特征输入（D_dynamic=0），仅使用 Y_pre + 历史336步真值。
+    居民用电R2仅0.13，说明公共特征只能解释很小一部分方差，个性化残差修正器至关重要。

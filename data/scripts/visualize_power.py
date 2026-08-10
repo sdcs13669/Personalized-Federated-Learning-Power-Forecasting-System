@@ -198,7 +198,9 @@ def _make_output_path(output: str | None, dataset_id: str, group_name: str,
         out_dir = p.parent
         out_dir.mkdir(exist_ok=True)
         return str(out_dir / f"{p.stem}_{group_name}.png")
-    return str(OUT_DIR / f"{dataset_id}_{src_tag}_{group_name}.png")
+    out_dir = OUT_DIR / dataset_id
+    out_dir.mkdir(exist_ok=True)
+    return str(out_dir / f"{dataset_id}_{src_tag}_{group_name}.png")
 
 
 def plot_dataset(csv_path: str, n_seq: int = 6, n_weeks: int = 2,

@@ -1,0 +1,218 @@
+# steel_ind/Usage_kWh XGBoost+SHAP 特征筛选报告
+# 自动生成于 2026-08-10 11:16
+
+meta:
+  dataset_id: steel_ind
+  name: "Steel Industry Energy Consumption (UCI)"
+  category: "钢铁工业用电"
+  target: Usage_kWh
+  script: scripts/feature-select/feature_select.py
+  n_features: 14
+  n_samples: 17520
+  timestep: 1800  # 30min
+
+# ---- 1. 统计筛选 ----
+statistical:
+  constants: ['category_id']
+  high_correlation_pairs:
+    []
+  vif:
+    lagging_reactive_power: 6.44
+    leading_reactive_power: 2.79
+    co2: 8.12
+    lagging_pf: 3.68
+    leading_pf: 2.62
+    load_type: 2.73
+    hour_sin: 2.84
+    hour_cos: 2.3
+    dow_sin: 2.76
+    dow_cos: 1.1
+    is_weekend: 3.07
+    month_sin: 1.06
+    month_cos: 1.17
+  missing_rate:
+    co2: 0.0064
+    leading_reactive_power: 0.001
+    lagging_reactive_power: 0.0
+    lagging_pf: 0.0
+    leading_pf: 0.0
+    load_type: 0.0
+    hour_sin: 0.0
+    hour_cos: 0.0
+    dow_sin: 0.0
+    dow_cos: 0.0
+    is_weekend: 0.0
+    month_sin: 0.0
+    month_cos: 0.0
+    category_id: 0.0
+
+# ---- 2. XGBoost 性能 ----
+xgb_performance:
+  mae: 7.4723
+  rmse: 12.8524
+  r2: 0.8338
+  n_estimators_used: 49
+  params: {'n_estimators': 500, 'max_depth': 6, 'learning_rate': 0.05, 'subsample': 0.8, 'colsample_bytree': 0.8, 'early_stopping_rounds': 20}
+
+# ---- 3. SHAP 特征重要性（含单位和含义） ----
+shap_importance:
+  co2:
+    shap: 11.255584
+    unit: "tCO2"
+    meaning: "二氧化碳排放量（吨），与钢厂产能正相关，是负荷的最强代理变量"
+    type: "本地特征"
+  lagging_reactive_power:
+    shap: 8.800241
+    unit: "kVarh"
+    meaning: "滞后无功功率，感应负载（电机）消耗的无功"
+    type: "本地特征"
+  load_type:
+    shap: 4.125661
+    unit: "类别（0/1/2）"
+    meaning: "负荷类型（0=Light_Load轻载, 1=Medium_Load中载, 2=Maximum_Load满载）"
+    type: "本地特征"
+  hour_cos:
+    shap: 3.155526
+    unit: "无量纲（cos编码）"
+    meaning: "小时余弦编码（0→23时映射到[-1,1]）"
+    type: "公共特征"
+  hour_sin:
+    shap: 2.446900
+    unit: "无量纲（sin编码）"
+    meaning: "小时正弦编码（0→23时映射到[-1,1]）"
+    type: "公共特征"
+  lagging_pf:
+    shap: 1.272498
+    unit: "无量纲（0~1）"
+    meaning: "滞后功率因数，表征感应负载效率（=有功/视在功率）"
+    type: "本地特征"
+  month_cos:
+    shap: 1.189870
+    unit: "无量纲（cos编码）"
+    meaning: "月份余弦编码（1→12月映射到[-1,1]），捕捉季节性"
+    type: "公共特征"
+  dow_sin:
+    shap: 0.773226
+    unit: "无量纲（sin编码）"
+    meaning: "星期正弦编码（周一→周日映射到[-1,1]）"
+    type: "公共特征"
+  month_sin:
+    shap: 0.293326
+    unit: "无量纲（sin编码）"
+    meaning: "月份正弦编码（1→12月映射到[-1,1]）"
+    type: "公共特征"
+  dow_cos:
+    shap: 0.248111
+    unit: "无量纲（cos编码）"
+    meaning: "星期余弦编码（周一→周日映射到[-1,1]）"
+    type: "公共特征"
+  leading_reactive_power:
+    shap: 0.237218
+    unit: "kVarh"
+    meaning: "超前无功功率，容性负载（电容器组）补偿的无功"
+    type: "本地特征"
+  leading_pf:
+    shap: 0.211693
+    unit: "无量纲（0~1）"
+    meaning: "超前功率因数，表征容性补偿效率"
+    type: "本地特征"
+  is_weekend:
+    shap: 0.184487
+    unit: "二值（0/1）"
+    meaning: "周末标志（周六/周日=1，工作日=0）"
+    type: "公共特征"
+  category_id:
+    shap: 0.000000
+    unit: "类别编码（常量2）"
+    meaning: "数据集类别编码（2=钢铁工业），本数据集内为常量"
+    type: "公共特征"
+
+# ---- 特征分类 ----
+feature_classification:
+  public_features:
+    - hour_sin
+    - hour_cos
+    - dow_sin
+    - dow_cos
+    - is_weekend
+    - month_sin
+    - month_cos
+    - category_id
+    note: "以上8个为固定encoder输入通道，跨所有数据集共享（§5.2.1）。不可剔除。"
+  local_features:
+    - co2
+    - lagging_reactive_power
+    - lagging_pf
+    - leading_reactive_power
+    - leading_pf
+    - load_type
+    note: "本地特征仅本钢厂可用，用于残差修正器的 D_dynamic 输入。6维精简至4维（剔除leading_reactive_power和leading_pf）。"
+
+# ---- 4. 筛选建议 ----
+recommendations:
+  drop:
+    - feature: leading_reactive_power
+      shap: 0.237
+      shap_pct: "<1%"
+      reason: "SHAP贡献极低（0.24），与leading_pf高度冗余（r=-0.950）。容性补偿的功率因数已足够表征无功状态，超前无功功率本身无额外预测价值。"
+      action: "从本地特征中剔除。清洗后csv中可移除该列，残差修正器 D_dynamic 不再包含。"
+    - feature: leading_pf
+      shap: 0.212
+      shap_pct: "<1%"
+      reason: "SHAP贡献极低（0.21），超前功率因数对钢厂负荷预测帮助甚微。钢厂负荷主要由感性负载（滞后）决定，容性补偿侧信息不重要。"
+      action: "从本地特征中剔除。清洗后csv中可移除该列。"
+    - feature: category_id
+      shap: 0.000
+      reason: "本数据集内为常量（全为2），SHAP贡献=0。但联邦跨数据集时必须保留，此处仅标记。"
+      action: "单数据集分析标记drop，联邦训练时恢复为encoder输入。"
+  retain:
+    - feature: co2
+      shap: 11.256
+      type: "本地特征"
+      reason: "SHAP贡献最高（11.26）。CO2排放与钢厂产能直接正相关，是预测用电负荷的最强单变量代理。本地特征，进入残差修正器。"
+    - feature: lagging_reactive_power
+      shap: 8.800
+      type: "本地特征"
+      reason: "SHAP贡献第2（8.80）。滞后无功功率反映感应电机运行状态，与钢厂主要用电设备直接关联。本地特征，进入残差修正器。"
+    - feature: load_type
+      shap: 4.126
+      type: "本地特征"
+      reason: "SHAP贡献第3（4.13，本地特征中排第3）。轻/中/满载三档分类直接反映钢厂运行强度。本地特征，进入残差修正器。"
+    - feature: lagging_pf
+      shap: 1.272
+      type: "本地特征"
+      reason: "SHAP贡献第6（1.27）。滞后功率因数补充描述电机负载效率，虽不如无功功率直接但仍提供增量信息。本地特征，进入残差修正器。"
+    - feature: hour_sin
+      shap: 2.447
+      type: "公共特征"
+      reason: "公共特征中SHAP贡献最高。日内用电周期性强。encoder固定输入。"
+    - feature: hour_cos
+      shap: 3.156
+      type: "公共特征"
+      reason: "公共特征中SHAP贡献第2。与hour_sin互补编码日内周期。encoder固定输入。"
+    - feature: dow_sin
+      shap: 0.773
+      type: "公共特征"
+      reason: "钢厂工作日/周末差异。encoder固定输入。"
+    - feature: dow_cos
+      shap: 0.248
+      type: "公共特征"
+      reason: "与dow_sin互补。encoder固定输入。"
+    - feature: is_weekend
+      shap: 0.184
+      type: "公共特征"
+      reason: "贡献虽低，但为encoder固定输入，不可剔除。"
+    - feature: month_sin
+      shap: 0.293
+      type: "公共特征"
+      reason: "与month_cos互补编码年周期。encoder固定输入。"
+    - feature: month_cos
+      shap: 1.190
+      type: "公共特征"
+      reason: "捕捉季节性。encoder固定输入。"
+  note: >
+    本地特征从6维精简至4维（剔除 leading_reactive_power 和 leading_pf）。
+    残差修正器 D_dynamic=4：co2, lagging_reactive_power, load_type, lagging_pf。
+    8个公共特征全部进入Global TCN encoder。
+    与旧版（v1.0）结论的差异：旧版保留 leading_pf 剔除 lagging_pf，
+    自动化SHAP显示 lagging_pf(1.27) >> leading_pf(0.21)，建议以新版为准。

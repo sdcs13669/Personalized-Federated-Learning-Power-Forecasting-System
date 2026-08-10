@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Visualize power load time series for any raw or processed dataset.
 
+Labels and features are plotted in separate figures by group.
+Group definitions are hardcoded per dataset (§DATASET_PLOT_COLS).
+
 Usage:
   python visualize_power.py --input data/processed/eld_ind.csv
-  python visualize_power.py --input data/processed/eld_ind.csv --cols MT_001,MT_050,MT_100
-  python visualize_power.py --input data/processed/lcl_res.csv --cols MAC000001,MAC000002
+  python visualize_power.py --input data/raw/steel_ind/Steel_industry_data.csv
   python visualize_power.py --input data/processed/steel_ind.csv --full
+  python visualize_power.py --input data/processed/lcl_res.csv --n 4 --weeks 1
+  python visualize_power.py --input data/raw/tetouan_city/Tetuan_City_power_consumption.csv --output my_plot
 """
 from __future__ import annotations
 
@@ -17,7 +21,7 @@ import matplotlib.dates as mdates
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT_DIR = ROOT / "data" / "processed" / "figures"
+OUT_DIR = ROOT / "data" / "figures"
 OUT_DIR.mkdir(exist_ok=True)
 
 plt.rcParams.update({
@@ -35,29 +39,76 @@ SKIP_COLS = {
 
 DT_CANDIDATES = ["datetime", "DateTime", "date", "timestamp", "time"]
 
-# Fixed column selections for known datasets (deterministic across runs)
-FIXED_SELECTION = {
-    "eld_ind": [
-        "MT_001", "MT_050", "MT_100", "MT_150", "MT_200", "MT_250",
-    ],
-    "steel_ind": [
-        "Usage_kWh", "lagging_reactive_power", "leading_reactive_power",
-        "co2", "lagging_pf", "leading_pf",
-    ],
-    "tetouan_city": [
-        "load_zone1", "load_zone2", "load_zone3",
-        "temperature", "humidity", "wind_speed",
-    ],
-    "household_res": [
-        "Global_active_power", "Global_reactive_power", "Voltage",
-        "Global_intensity", "Sub_metering_1", "Sub_metering_2",
-        "Sub_metering_3",
-    ],
-    "lcl_res": [
-        "MAC000001", "MAC000002", "MAC000003", "MAC000004", "MAC000005",
-        "MAC000006",
-    ],
+# ── Hardcoded column groups per dataset ──────────────────────────────
+# Each dataset has named groups; each group has "proc" and "raw" column lists.
+# Labels and features are separated; features on different scales are split.
+DATASET_PLOT_COLS = {
+    "eld_ind": {
+        "labels": {
+            "proc": ["MT_200", "MT_210", "MT_220", "MT_230", "MT_240", "MT_250"],
+            "raw":  ["MT_200", "MT_210", "MT_220", "MT_230", "MT_240", "MT_250"],
+        },
+    },
+    "lcl_res": {
+        "labels": {
+            "proc": ["MAC000145", "MAC000149", "MAC000150",
+                     "MAC000151", "MAC000152", "MAC000153"],
+            "raw":  ["MAC000145", "MAC000149", "MAC000150",
+                     "MAC000151", "MAC000152", "MAC000153"],
+        },
+    },
+    "steel_ind": {
+        "labels": {
+            "proc": ["Usage_kWh"],
+            "raw":  ["Usage_kWh"],
+        },
+        "features_reactive": {
+            "proc": ["lagging_reactive_power", "leading_reactive_power"],
+            "raw":  ["Lagging_Current_Reactive.Power_kVarh",
+                     "Leading_Current_Reactive_Power_kVarh"],
+        },
+        "features_co2_pf": {
+            "proc": ["co2", "lagging_pf", "leading_pf"],
+            "raw":  ["CO2(tCO2)", "Lagging_Current_Power_Factor",
+                     "Leading_Current_Power_Factor"],
+        },
+    },
+    "tetouan_city": {
+        "labels": {
+            "proc": ["load_zone1", "load_zone2", "load_zone3"],
+            "raw":  ["Zone 1 Power Consumption", "Zone 2  Power Consumption",
+                     "Zone 3  Power Consumption"],
+        },
+        "features_weather": {
+            "proc": ["temperature", "humidity", "wind_speed",
+                     "general_diffuse_flow", "diffuse_flow"],
+            "raw":  ["Temperature", "Humidity", "Wind Speed",
+                     "general diffuse flows", "diffuse flows"],
+        },
+    },
 }
+
+# Unit conversions for raw data (applied before plotting).
+RAW_CONVERSIONS = {
+    ("steel_ind", "Lagging_Current_Power_Factor"): lambda s: pd.to_numeric(s, errors="coerce") / 100.0,
+    ("steel_ind", "Leading_Current_Power_Factor"): lambda s: pd.to_numeric(s, errors="coerce") / 100.0,
+}
+
+
+def _parse_datetime(series: pd.Series):
+    """Parse datetime, trying dayfirst=False then dayfirst=True; keep fewer NaT."""
+    s_default = pd.to_datetime(series, errors="coerce")
+    if s_default.isna().mean() < 0.1:
+        return s_default
+    s_dayfirst = pd.to_datetime(series, errors="coerce", dayfirst=True)
+    return s_default if s_default.notna().sum() >= s_dayfirst.notna().sum() else s_dayfirst
+
+
+def _detect_dataset_id(csv_path: str) -> str:
+    path = Path(csv_path).resolve()
+    if "raw" in path.parts:
+        return path.parent.name
+    return path.stem
 
 
 def _detect_datetime_col(df: pd.DataFrame) -> str:
@@ -67,62 +118,87 @@ def _detect_datetime_col(df: pd.DataFrame) -> str:
     for c in df.columns:
         if df[c].dtype == object:
             try:
-                pd.to_datetime(df[c], errors="raise")
-                return c
-            except (ValueError, Exception):
+                s = _parse_datetime(df[c])
+                if s.notna().sum() > len(df) * 0.8:
+                    return c
+            except Exception:
                 pass
     raise ValueError(f"Cannot detect datetime column. Candidates: {DT_CANDIDATES}")
 
 
-def _detect_power_cols(df: pd.DataFrame, dt_col: str) -> list:
-    numeric = df.select_dtypes(include=[np.number]).columns
-    cols = [c for c in numeric if c not in SKIP_COLS and c != dt_col]
-    if not cols:
-        raise ValueError("No plottable numeric columns found")
-    return cols
+def _resolve_groups(df: pd.DataFrame, dataset_id: str, is_raw: bool,
+                    user_cols: list | None, n_seq: int) -> list[tuple[str, list]]:
+    """Return [(group_name, [col_names]), ...] to plot.
 
-
-def _resolve_columns(df: pd.DataFrame, dt_col: str, power_cols: list,
-                     dataset_name: str, user_cols: list | None,
-                     n_seq: int) -> tuple:
-    """Resolve which columns/users to plot.
-
-    Priority: --cols arg > FIXED_SELECTION[dataset] > auto (evenly spaced / top-N).
-    Returns (selected, is_long_format, group_col).
+    If --cols is given, all resolved columns go into a single "custom" group.
+    Otherwise, use the hardcoded groups from DATASET_PLOT_COLS.
     """
-    is_long = "LCLid" in df.columns
-
     if user_cols:
-        # User explicitly specified columns/IDs
-        if is_long:
-            valid = [u for u in user_cols if u in df["LCLid"].unique()]
-        else:
-            valid = [c for c in user_cols if c in df.columns]
-        if not valid:
-            print(f"WARNING: none of {user_cols} found, falling back to auto")
-        else:
-            return valid[:n_seq], is_long, "LCLid" if is_long else None
+        # Resolve each user-specified name against all groups' proc+raw lists
+        groups = DATASET_PLOT_COLS.get(dataset_id, {})
+        resolved = []
+        for c in user_cols:
+            if c in df.columns:
+                resolved.append(c)
+                continue
+            # Try raw→proc or proc→raw translation across all groups
+            found = False
+            for grp in groups.values():
+                proc_list = grp.get("proc", [])
+                raw_list = grp.get("raw", [])
+                if c in raw_list and len(raw_list) == len(proc_list):
+                    idx = raw_list.index(c)
+                    if proc_list[idx] in df.columns:
+                        resolved.append(proc_list[idx])
+                        found = True
+                        break
+                elif c in proc_list and len(raw_list) == len(proc_list):
+                    idx = proc_list.index(c)
+                    if raw_list[idx] in df.columns:
+                        resolved.append(raw_list[idx])
+                        found = True
+                        break
+            if not found:
+                print(f"  WARNING: column '{c}' not found in {dataset_id}")
+        if resolved:
+            return [("custom", resolved[:n_seq])]
+        return []
 
-    # Use fixed selection from FIXED_SELECTION dict
-    fixed = FIXED_SELECTION.get(dataset_name)
-    if fixed:
-        if is_long:
-            valid = [u for u in fixed if u in df["LCLid"].unique()]
+    # No --cols: use hardcoded groups
+    groups = DATASET_PLOT_COLS.get(dataset_id, {})
+    if not groups:
+        print(f"  WARNING: no hardcoded columns for '{dataset_id}'")
+        return []
+
+    result = []
+    for grp_name, grp_cols in groups.items():
+        # Prefer key matching data source
+        primary_key = "raw" if is_raw else "proc"
+        fallback_key = "proc" if is_raw else "raw"
+        cols = None
+        for key in (primary_key, fallback_key):
+            candidates = grp_cols.get(key, [])
+            valid = [c for c in candidates if c in df.columns]
+            if valid:
+                cols = valid[:n_seq]
+                break
+        if cols:
+            result.append((grp_name, cols))
         else:
-            valid = [c for c in fixed if c in df.columns]
-        if valid:
-            return valid[:n_seq], is_long, "LCLid" if is_long else None
+            print(f"  WARNING: no columns found for group '{grp_name}' in {dataset_id}")
+    return result
 
-    # Auto: top-N for long, evenly spaced for wide
-    if is_long:
-        user_sizes = df.groupby("LCLid").size()
-        top = user_sizes.nlargest(min(n_seq, len(user_sizes))).index.tolist()
-        return top, True, "LCLid"
 
-    if len(power_cols) <= n_seq:
-        return power_cols, False, None
-    idxs = np.linspace(0, len(power_cols) - 1, n_seq, dtype=int)
-    return [power_cols[i] for i in idxs], False, None
+def _make_output_path(output: str | None, dataset_id: str, group_name: str,
+                      is_raw: bool) -> str:
+    """Build output path: {base}_{group}.png or {OUT_DIR}/{dataset}_{src}_{group}.png."""
+    src_tag = "raw" if is_raw else "proc"
+    if output:
+        p = Path(output)
+        out_dir = p.parent
+        out_dir.mkdir(exist_ok=True)
+        return str(out_dir / f"{p.stem}_{group_name}.png")
+    return str(OUT_DIR / f"{dataset_id}_{src_tag}_{group_name}.png")
 
 
 def plot_dataset(csv_path: str, n_seq: int = 6, n_weeks: int = 2,
@@ -131,19 +207,25 @@ def plot_dataset(csv_path: str, n_seq: int = 6, n_weeks: int = 2,
     df = pd.read_csv(csv_path, low_memory=False)
     print(f"Loaded {csv_path} ({len(df)} rows x {len(df.columns)} cols)")
 
+    dataset_id = _detect_dataset_id(csv_path)
+    is_raw = "raw" in Path(csv_path).resolve().parts
+
+    # Apply raw unit conversions (e.g. power factor % → 0-1)
+    if is_raw:
+        for (ds_id, col), fn in RAW_CONVERSIONS.items():
+            if ds_id == dataset_id and col in df.columns:
+                df[col] = fn(df[col])
+
     dt_col = _detect_datetime_col(df)
-    t = pd.to_datetime(df[dt_col])
-    power_cols = _detect_power_cols(df, dt_col)
-    dataset_name = Path(csv_path).stem
+    t = _parse_datetime(df[dt_col])
+    # Sort by datetime (raw data may not be sorted)
+    df = df.iloc[t.argsort()].reset_index(drop=True)
+    t = t.sort_values().reset_index(drop=True)
 
-    selected, is_long, group_col = _resolve_columns(
-        df, dt_col, power_cols, dataset_name, user_cols, n_seq)
-
-    if not selected:
-        print("ERROR: no valid columns/IDs to plot")
+    groups = _resolve_groups(df, dataset_id, is_raw, user_cols, n_seq)
+    if not groups:
+        print("ERROR: no valid columns to plot")
         return
-
-    print(f"  plotting: {selected}")
 
     if full_range:
         mask = slice(None)
@@ -154,56 +236,27 @@ def plot_dataset(csv_path: str, n_seq: int = 6, n_weeks: int = 2,
         mask = (t >= t_min) & (t < t_max)
         title_suffix = f"first {n_weeks} week(s)"
 
-    if is_long:
-        _plot_long(df, dt_col, mask, selected, group_col, dataset_name,
-                   title_suffix, output)
-    else:
-        _plot_wide(df, dt_col, mask, selected, dataset_name, title_suffix, output)
+    for grp_name, cols in groups:
+        out_path = _make_output_path(output, dataset_id, grp_name, is_raw)
+        print(f"  [{grp_name}] {cols}")
+        _plot_wide(df, dt_col, mask, cols, f"{dataset_id}/{grp_name}",
+                   title_suffix, out_path)
 
 
-def _plot_wide(df, dt_col, mask, cols, dataset_name, title_suffix, output):
-    t = pd.to_datetime(df[dt_col])
+def _plot_wide(df, dt_col, mask, cols, title_prefix, title_suffix, out_path):
+    t = _parse_datetime(df[dt_col])
     fig, ax = plt.subplots(figsize=(14, 5))
     for c in cols:
         s = pd.to_numeric(df[c].loc[mask], errors="coerce")
         ax.plot(t.loc[mask], s.values, linewidth=0.5, label=c, alpha=0.85)
 
-    ax.set_title(f"{dataset_name} — {len(cols)} sequences ({title_suffix})")
+    ax.set_title(f"{title_prefix} — {len(cols)} sequences ({title_suffix})")
     ax.set_ylabel("Value")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
     if len(cols) <= 10:
         ax.legend(fontsize=7, ncol=min(4, len(cols)))
     fig.tight_layout()
 
-    out_path = output or str(OUT_DIR / f"{dataset_name}_power.png")
-    fig.savefig(out_path)
-    plt.close(fig)
-    print(f"  → {out_path}")
-
-
-def _plot_long(df, dt_col, mask, user_ids, group_col, dataset_name,
-               title_suffix, output):
-    val_cols = _detect_power_cols(df, dt_col)
-    val_col = val_cols[0] if val_cols else "KWH"
-
-    fig, ax = plt.subplots(figsize=(14, 5))
-    for uid in user_ids:
-        idx = (df[group_col] == uid) & mask
-        sub = df.loc[idx].sort_values(dt_col)
-        if sub.empty:
-            continue
-        s = pd.to_numeric(sub[val_col], errors="coerce")
-        ax.plot(pd.to_datetime(sub[dt_col]), s.values, linewidth=0.5,
-                label=str(uid), alpha=0.85)
-
-    ax.set_title(f"{dataset_name} — {len(user_ids)} {group_col}s ({title_suffix})")
-    ax.set_ylabel(val_col)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
-    if len(user_ids) <= 10:
-        ax.legend(fontsize=7, ncol=min(4, len(user_ids)))
-    fig.tight_layout()
-
-    out_path = output or str(OUT_DIR / f"{dataset_name}_power.png")
     fig.savefig(out_path)
     plt.close(fig)
     print(f"  → {out_path}")
@@ -215,16 +268,15 @@ def main():
     ap.add_argument("--input", required=True,
                     help="Path to CSV file (raw or processed)")
     ap.add_argument("--cols", default=None,
-                    help="Comma-separated column names or user IDs to plot "
-                         "(overrides auto-selection)")
+                    help="Comma-separated column names (overrides hardcoded groups)")
     ap.add_argument("--n", type=int, default=6,
-                    help="Number of sequences to plot (max 10, default 6)")
+                    help="Max sequences per group (default 6)")
     ap.add_argument("--weeks", type=int, default=2,
                     help="Number of weeks to show (default 2)")
     ap.add_argument("--full", action="store_true",
                     help="Plot full time range")
     ap.add_argument("--output", default=None,
-                    help="Output figure path (auto-generated if omitted)")
+                    help="Output path base (group name inserted before .png)")
     args = ap.parse_args()
 
     n_seq = min(args.n, 10)

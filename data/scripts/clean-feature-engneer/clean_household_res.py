@@ -22,7 +22,8 @@ PROC.mkdir(exist_ok=True)
 DATASET_ID = "household_res"
 TARGET_TIMESTEP = 1800  # 30 min
 CATEGORY_ID = 0          # 居民
-IQR_MULTIPLIER = 2.5
+IQR_MULTIPLIER_LABEL = 2.5
+IQR_MULTIPLIER_FEATURE = 2.5
 ROLLING_WINDOW = 336   # 7 days @ 30min
 MAX_GAP_DROP = 336    # drop sequences with raw gap > 336 steps (7 days)
 # NOTE: household_res has a ~5-day natural gap; threshold raised vs default 48
@@ -63,8 +64,8 @@ def detect_outliers_diff(series: pd.Series) -> pd.Series:
     q1 = d.quantile(0.25)
     q3 = d.quantile(0.75)
     iqr = q3 - q1
-    lo = q1 - IQR_MULTIPLIER * iqr
-    hi = q3 + IQR_MULTIPLIER * iqr
+    lo = q1 - IQR_MULTIPLIER_LABEL * iqr
+    hi = q3 + IQR_MULTIPLIER_LABEL * iqr
     mask = (d < lo) | (d > hi)
     return mask.fillna(False)
 
@@ -77,8 +78,8 @@ def detect_outliers_rolling(series: pd.Series) -> pd.Series:
     q1 = roll.quantile(0.25)
     q3 = roll.quantile(0.75)
     iqr = q3 - q1
-    lo = q1 - IQR_MULTIPLIER * iqr
-    hi = q3 + IQR_MULTIPLIER * iqr
+    lo = q1 - IQR_MULTIPLIER_FEATURE * iqr
+    hi = q3 + IQR_MULTIPLIER_FEATURE * iqr
     mask = (s < lo) | (s > hi)
     return mask.fillna(False)
 

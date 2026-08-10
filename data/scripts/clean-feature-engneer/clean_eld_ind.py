@@ -21,7 +21,7 @@ PROC.mkdir(exist_ok=True)
 DATASET_ID = "eld_ind"
 TARGET_TIMESTEP = 1800  # 30 min
 CATEGORY_ID = 1          # 变压器
-IQR_MULTIPLIER = 2.5
+IQR_MULTIPLIER_LABEL = 2.5
 ROLLING_WINDOW = 336   # 7 days @ 30min
 MAX_GAP_DROP = 48     # drop sequences with raw gap > 48 steps (24h)
 
@@ -111,8 +111,8 @@ def clean() -> pd.DataFrame:
     q1 = np.nanpercentile(d, 25, axis=0)
     q3 = np.nanpercentile(d, 75, axis=0)
     iqr = q3 - q1
-    lo = q1 - IQR_MULTIPLIER * iqr
-    hi = q3 + IQR_MULTIPLIER * iqr
+    lo = q1 - IQR_MULTIPLIER_LABEL * iqr
+    hi = q3 + IQR_MULTIPLIER_LABEL * iqr
     outlier_mask = (d < lo) | (d > hi)
     n_outliers = outlier_mask.sum()
     n_seqs = X.shape[1]

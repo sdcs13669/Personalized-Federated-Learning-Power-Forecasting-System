@@ -1,106 +1,50 @@
 #!/usr/bin/env python3
 """Clean script for lcl_res (Low Carbon London smart meter, London Datastore).
 
-- 按客户端 (每户 LCLid) 独立处理, 不跨客户端借信息 (§8 防泄漏)
-- 统一 timestep: 原生即 30min, 无需重采样
-- 异常检测: IQR (Q1−1.5×IQR, Q3+1.5×IQR) 逐户 → 置 NaN
+- 宽表输入: datetime + MAC000002, MAC000003, ... (已 pivot, 每列一户)
+- 原生即 30min, 无需重采样
+- 异常检测: diff IQR (系数 2.5) 逐户独立, 不跨户借信息 (§8 防泄漏)
 - 物理边界: KWH > 0
-- 填充策略: 根据清洗后缺失率与最大连续缺口决定 (≤6步插值, 大缺口保留 NaN)
-- tariff_type 为常量 (全部 Std), 清洗后剔除
-- 支持批次处理与断点续跑
-
-Usage:
-  python3 clean_lcl_res.py --batch 50
-  python3 clean_lcl_res.py --finish
+- 填充: 三次样条 (interior only)
 """
 from __future__ import annotations
 
-import argparse
 import numpy as np
 import pandas as pd
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RAW = ROOT /  "raw" / "lcl_res"
-PROC = ROOT / "processed"
-TMP = PROC / "_lcl_batches"
+PROC = ROOT /  "processed"
 PROC.mkdir(exist_ok=True)
-TMP.mkdir(exist_ok=True)
 
 DATASET_ID = "lcl_res"
 CATEGORY_ID = 0          # 居民
-IQR_MULTIPLIER = 2.5
-MAX_GAP_DROP = 48     # drop users with raw gap > 48 steps (24h)
+IQR_MULTIPLIER_LABEL = 2.5
+MAX_GAP_DROP = 48        # drop users with gap > 48 steps (24h)
 
 
-def _max_consecutive_nan(series: pd.Series) -> int:
-    """Max consecutive NaN after first valid (non-NaN) value.
-
-    Leading NaN from trimming is NOT counted as a gap.
-    """
-    missing = series.isna()
-    if not missing.any():
+def _max_consecutive_nan(arr: np.ndarray) -> int:
+    """Max consecutive NaN from first valid (non-NaN, >0) position."""
+    valid_idx = np.where(~np.isnan(arr) & (arr > 0))[0]
+    if len(valid_idx) == 0:
+        return len(arr)
+    start = valid_idx[0]
+    is_nan = np.isnan(arr[start:])
+    if not is_nan.any():
         return 0
-    valid_mask = ~missing
-    if not valid_mask.any():
-        return len(series)
-    first_valid = valid_mask.idxmax()
-    missing_after = missing.loc[first_valid:]
-    if not missing_after.any():
-        return 0
-    gap = missing_after.astype(int)
-    run_id = (gap != gap.shift()).cumsum()
-    return gap.groupby(run_id).transform("sum").max()
-
-
-def detect_outliers_diff(series: pd.Series) -> pd.Series:
-    """Labels: IQR on first-order diffs to catch spikes."""
-    s = series.astype(float)
-    if s.notna().sum() < 4:
-        return pd.Series(False, index=s.index)
-    d = s.diff()
-    q1 = d.quantile(0.25)
-    q3 = d.quantile(0.75)
-    iqr_val = q3 - q1
-    lo = q1 - IQR_MULTIPLIER * iqr_val
-    hi = q3 + IQR_MULTIPLIER * iqr_val
-    mask = (d < lo) | (d > hi)
-    return mask.fillna(False)
-
-
-def clean_kwh(series: pd.Series):
-    """Clean KWH column: outlier detect → NaN → clip >0."""
-    s = series.astype(float)
-
-    outlier_mask = detect_outliers_diff(s)
-    n_out = outlier_mask.sum()
-    s = s.mask(outlier_mask, np.nan)
-    s = s.clip(0.0, float("inf"))
-
-    missing_rate = s.isna().mean()
-    max_gap = _max_consecutive_nan(s)
-
-    return s, missing_rate, max_gap, n_out
+    boundaries = np.diff(np.concatenate(([True], ~is_nan, [True])))
+    runs = np.where(boundaries)[0]
+    return (runs[1::2] - runs[::2]).max()
 
 
 def load_raw() -> pd.DataFrame:
-    cache = Path("/tmp/lcl_raw.pkl")
-    if cache.exists():
-        return pd.read_pickle(cache)
-    csv_files = list(RAW.glob("*.csv"))
+    csv_files = list(RAW.glob("lcl_res.csv"))
     if not csv_files:
-        raise FileNotFoundError(f"No CSV in {RAW}")
-    df = pd.read_csv(csv_files[0])
-    df.columns = [c.strip() for c in df.columns]
-    df = df.rename(columns={
-        "KWH/hh (per half hour)": "KWH",
-        "DateTime": "datetime",
-        "stdorToU": "tariff",
-    })
+        raise FileNotFoundError(f"No lcl_res.csv in {RAW}")
+    df = pd.read_csv(csv_files[0], low_memory=False)
     df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-    df["KWH"] = pd.to_numeric(df["KWH"], errors="coerce")
-    df = df.dropna(subset=["datetime"])
-    df.to_pickle(cache)
+    df = df.dropna(subset=["datetime"]).sort_values("datetime").reset_index(drop=True)
     return df
 
 
@@ -120,110 +64,106 @@ def add_public_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def process_batch(batch_df: pd.DataFrame) -> pd.DataFrame:
-    out = []
-    for lid, g in batch_df.groupby("LCLid", sort=True):
-        g = g.sort_values("datetime").drop_duplicates(
-            subset=["datetime"], keep="first").reset_index(drop=True)
+def clean() -> pd.DataFrame:
+    df = load_raw()
+    user_cols = [c for c in df.columns if c.startswith("MAC")]
+    n_users = len(user_cols)
+    print(f"Wide-format: {len(df)} rows, {n_users} users")
 
-        # Trim leading zeros (household not yet occupied / meter not active)
-        kwh_vals = pd.to_numeric(g["KWH"], errors="coerce").values
-        valid = np.where(~np.isnan(kwh_vals) & (kwh_vals > 0))[0]
+    df = df.set_index("datetime")
+
+    # ---- Step 0: drop users with raw gaps > 48 steps ----
+    X = df[user_cols].values.astype(np.float64)
+    keep_idx = []
+    for j in range(X.shape[1]):
+        col = X[:, j]
+        is_bad = np.isnan(col) | (col == 0)
+        if not is_bad.any():
+            keep_idx.append(j)
+            continue
+        valid_idx = np.where(~is_bad)[0]
+        if len(valid_idx) == 0:
+            continue
+        start = valid_idx[0]
+        is_bad_after = is_bad[start:]
+        if not is_bad_after.any():
+            keep_idx.append(j)
+            continue
+        boundaries = np.diff(np.concatenate(([True], ~is_bad_after, [True])))
+        runs = np.where(boundaries)[0]
+        max_run = (runs[1::2] - runs[::2]).max()
+        if max_run <= MAX_GAP_DROP:
+            keep_idx.append(j)
+    n_dropped = n_users - len(keep_idx)
+    if n_dropped > 0:
+        print(f"Dropped {n_dropped} users with raw max_gap > {MAX_GAP_DROP}")
+    X = X[:, keep_idx]
+    user_cols = [user_cols[i] for i in keep_idx]
+
+    # ---- Step 0.5: trim leading zeros per user ----
+    for j in range(X.shape[1]):
+        col = X[:, j]
+        valid = np.where(~np.isnan(col) & (col > 0))[0]
         if len(valid) > 0 and valid[0] > 0:
-            g = g.iloc[valid[0]:].reset_index(drop=True)
+            X[:valid[0], j] = np.nan
 
-        if len(g) == 0:
-            continue
+    # ---- Step 1: diff IQR per user ----
+    d = np.diff(X, axis=0, prepend=X[:1, :])
+    q1 = np.nanpercentile(d, 25, axis=0)
+    q3 = np.nanpercentile(d, 75, axis=0)
+    iqr = q3 - q1
+    lo = q1 - IQR_MULTIPLIER_LABEL * iqr
+    hi = q3 + IQR_MULTIPLIER_LABEL * iqr
+    outlier_mask = (d < lo) | (d > hi)
+    n_outliers = outlier_mask.sum()
+    n_seqs = X.shape[1]
+    print(f"IQR flagged {n_outliers} outliers total "
+          f"({n_outliers / n_seqs:.0f} avg per user, "
+          f"{100 * n_outliers / outlier_mask.size:.2f}% of all values)")
+    X[outlier_mask] = np.nan
+    X = np.clip(X, 0.0, None)
 
-        # Drop users with raw gaps > 48 steps (24h) in KWH
-        kwh_raw = pd.to_numeric(g["KWH"], errors="coerce").values
-        is_bad = np.isnan(kwh_raw) | (kwh_raw == 0)
-        if is_bad.any():
-            valid_idx = np.where(~is_bad)[0]
-            if len(valid_idx) == 0:
-                continue
-            start = valid_idx[0]
-            is_bad_after = is_bad[start:]
-            if is_bad_after.any():
-                boundaries = np.diff(np.concatenate(([True], ~is_bad_after, [True])))
-                runs = np.where(boundaries)[0]
-                max_run = (runs[1::2] - runs[::2]).max()
-                if max_run > MAX_GAP_DROP:
-                    continue
+    # ---- Step 2: post-cleaning gap filter ----
+    max_gaps = [_max_consecutive_nan(X[:, j]) for j in range(X.shape[1])]
+    post_keep = [j for j, g in enumerate(max_gaps) if g <= MAX_GAP_DROP]
+    n_post_dropped = X.shape[1] - len(post_keep)
+    if n_post_dropped > 0:
+        print(f"Dropped {n_post_dropped} users with post-cleaning "
+              f"max_gap > {MAX_GAP_DROP}")
+        X = X[:, post_keep]
+        user_cols = [user_cols[i] for i in post_keep]
 
-        g["KWH"], mr, mg, n_out = clean_kwh(g["KWH"])
+    # ---- Step 3: cubic spline interpolation + re-clip ----
+    for j in range(X.shape[1]):
+        col = X[:, j]
+        if np.isnan(col).any():
+            s = pd.Series(col)
+            s = s.interpolate(method="cubic", limit_area="inside")
+            X[:, j] = s.values
+    X = np.clip(X, 0.0, None)
 
-        # Drop users with post-cleaning max_gap > 48
-        if mg > MAX_GAP_DROP:
-            continue
+    # ---- Step 4: build output ----
+    df_out = pd.DataFrame(X, index=df.index, columns=user_cols)
+    df_out = df_out.reset_index()
+    df_out = add_public_features(df_out)
 
-        # Cubic spline interpolation (interior gaps only)
-        g["KWH"] = g["KWH"].interpolate(method="cubic", limit_area="inside")
-        g["KWH"] = g["KWH"].clip(0.0, None)  # physical: KWH > 0
-
-        if lid == batch_df["LCLid"].unique()[0]:
-            print(f"  example {lid}: IQR_outliers={n_out}, "
-                  f"missing_rate={mr:.4f}, max_gap={mg}")
-
-        g["tariff"] = g["tariff"].ffill().bfill()
-        out.append(g)
-
-    if not out:
-        return pd.DataFrame()
-    df = pd.concat(out, ignore_index=True)
-    # tariff_type is constant (all Std=0) in this public subset → drop
-    df = add_public_features(df)
-    keep = ["LCLid", "datetime", "KWH",
-            "hour_sin", "hour_cos", "dow_sin", "dow_cos", "is_weekend",
-            "month_sin", "month_cos", "category_id"]
-    return df[keep]
+    keep = (["datetime"] + user_cols +
+            ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "is_weekend",
+             "month_sin", "month_cos", "category_id"])
+    return df_out[keep]
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--batch", type=int, default=30, help="users per batch")
-    ap.add_argument("--finish", action="store_true", help="merge batches")
-    args = ap.parse_args()
-
-    if args.finish:
-        parts = sorted(TMP.glob("batch_*.csv"))
-        if not parts:
-            print("No batches found")
-            return
-        df = pd.concat([pd.read_csv(p) for p in parts], ignore_index=True)
-        out = PROC / f"{DATASET_ID}.csv"
-        df.to_csv(out, index=False)
-        n_data = len(df.columns) - 8  # LCLid + KWH + 7 public + 1 cat - actually just count
-        data_cols = [c for c in df.columns if c not in
-                     {"LCLid", "datetime", "hour_sin", "hour_cos", "dow_sin",
-                      "dow_cos", "is_weekend", "month_sin", "month_cos",
-                      "category_id"}]
-        n_public = len(df.columns) - len(data_cols)
-        print(f"Merged {len(parts)} batches -> {out}")
-        print(f"  {len(df)} rows, {df['LCLid'].nunique()} users, "
-              f"{len(data_cols)} data + {n_public} public = {len(df.columns)} cols")
-        print(f"  KWH missing_rate={df['KWH'].isna().mean():.4f} "
-              f"range=[{df['KWH'].min():.3f}, {df['KWH'].max():.3f}]")
-        return
-
-    raw = load_raw()
-    users = sorted(raw["LCLid"].unique())
-    done = [int(p.stem.split("_")[1]) for p in TMP.glob("batch_*.csv")]
-    pending = [i for i, u in enumerate(users) if i not in done]
-    print(f"total users={len(users)}, already_done={len(done)}, "
-          f"pending={len(pending)}")
-
-    take = pending[: args.batch]
-    for i in take:
-        uid = users[i]
-        g = raw[raw["LCLid"] == uid]
-        cleaned = process_batch(g)
-        if cleaned.empty:
-            print(f"  skip user {uid} (filtered out)", flush=True)
-            continue
-        cleaned.to_csv(TMP / f"batch_{i}.csv", index=False)
-        print(f"  done user {uid} ({len(cleaned)} rows)", flush=True)
-    print(f"processed {len(take)} users this run")
+    df = clean()
+    out = PROC / f"{DATASET_ID}.csv"
+    df.to_csv(out, index=False)
+    user_cols = [c for c in df.columns if c.startswith("MAC")]
+    sub = df[user_cols]
+    n_public = len(df.columns) - len(user_cols)
+    print(f"Wrote {out} ({len(df)} rows, "
+          f"{len(user_cols)} users + {n_public} public = {len(df.columns)} cols)")
+    print(f"Final KWH missing_rate={sub.isna().mean().mean():.4f} "
+          f"range=[{sub.min().min():.3f}, {sub.max().max():.3f}]")
 
 
 if __name__ == "__main__":

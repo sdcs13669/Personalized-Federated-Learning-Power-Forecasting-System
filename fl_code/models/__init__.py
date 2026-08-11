@@ -1,7 +1,7 @@
 from .tcn   import TCN, TemporalConvNet, TemporalBlock, Chomp1d
-from .rc    import MLPRC, TCNRC, quantile_loss
+from .rc    import MLPRC, LSTMRC, TCNRC, quantile_loss
 from .tcnc import TCNC
 from .config import (
-    TCNConfig, CorrectorConfig, FedTCNConfig,
+    TCNConfig, CorrectorConfig, TCNCConfig,
     build_tcn, build_fed_tcn,
 )

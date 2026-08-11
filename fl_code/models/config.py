@@ -33,13 +33,14 @@ class TCNConfig:
 class CorrectorConfig:
     """Per-client residual corrector (never shared).
 
-    Supports two architectures selected by ``rc_type``:
+    Supports three architectures selected by ``rc_type``:
 
-    - ``"mlp"`` — :class:`MLPRC`: per-step MLP, no temporal interaction
-    - ``"tcn"`` — :class:`TCNRC`: lightweight causal TCN (rf=511 >= 336)
+    - ``"mlp"``  — :class:`MLPRC`:  per-step MLP, no temporal interaction
+    - ``"lstm"`` — :class:`LSTMRC`: lightweight LSTM, sequential modelling
+    - ``"tcn"``  — :class:`TCNRC`:  causal TCN (rf=511 >= 336)
     """
 
-    rc_type: Literal["mlp", "tcn"] = "tcn"
+    rc_type: Literal["mlp", "lstm", "tcn"] = "tcn"
 
     pred_len: int = 336
     local_feat_dim: int = 0          # varies per dataset
@@ -48,6 +49,10 @@ class CorrectorConfig:
 
     # MLP settings (used when rc_type="mlp")
     hidden_dims: tuple[int, ...] = (64, 32)
+
+    # LSTM settings (used when rc_type="lstm")
+    lstm_hidden_size: int = 32
+    lstm_num_layers: int = 1
 
     # TCN settings (used when rc_type="tcn")
     num_channels: tuple[int, ...] = (16,) * 8  # 8 layers, rf=511
@@ -96,7 +101,7 @@ def build_tcn(config: TCNConfig):
 
 def build_corrector(config: CorrectorConfig):
     """Build a :class:`MLPRC` or :class:`TCNRC` based on ``rc_type`` (Phase 3)."""
-    from .rc import MLPRC, TCNRC
+    from .rc import MLPRC, LSTMRC, TCNRC
 
     if config.rc_type == "mlp":
         return MLPRC(
@@ -104,6 +109,15 @@ def build_corrector(config: CorrectorConfig):
             local_feat_dim=config.local_feat_dim,
             quantiles=config.quantiles,
             hidden_dims=config.hidden_dims,
+            dropout=config.dropout,
+        )
+    elif config.rc_type == "lstm":
+        return LSTMRC(
+            pred_len=config.pred_len,
+            local_feat_dim=config.local_feat_dim,
+            quantiles=config.quantiles,
+            hidden_size=config.lstm_hidden_size,
+            num_layers=config.lstm_num_layers,
             dropout=config.dropout,
         )
     else:

@@ -1,8 +1,9 @@
 """Residual Corrector — per-client personalised model, never shared.
 
-Two implementations:
-  - :class:`MLPRC` — lightweight MLP, per time-step independent
-  - :class:`TCNRC` — TCN with same-length output (lighter than Global TCN)
+Three implementations:
+  - :class:`MLPRC`  — per-step MLP, no temporal interaction
+  - :class:`LSTMRC` — lightweight LSTM, sequential temporal modelling
+  - :class:`TCNRC`  — causal TCN with same-length output
 """
 
 import torch
@@ -84,6 +85,85 @@ class MLPRC(nn.Module):
 
         x = torch.cat(parts, dim=-1)                # (B, pred_len, in_dim)
         return self.mlp(x)                           # (B, pred_len, num_quantiles)
+
+
+# ============================================================================
+# LSTM-based residual corrector
+# ============================================================================
+
+class LSTMRC(nn.Module):
+    """LSTM residual corrector — lightweight sequential model.
+
+    Concatenates inputs along the feature dimension and feeds the sequence
+    through a single-layer LSTM.  A linear head maps each hidden state to
+    quantile corrections.  Very small parameter count, good for small
+    clients.
+
+    Parameters
+    ----------
+    pred_len : int
+        Forecast horizon.
+    local_feat_dim : int
+        Number of local dynamic feature channels.
+    quantiles : tuple[float]
+        Quantile levels.
+    hidden_size : int
+        LSTM hidden size.
+    num_layers : int
+        LSTM layers (default 1 for lightweight).
+    dropout : float
+    """
+
+    quantiles: tuple[float, ...]
+
+    def __init__(
+        self,
+        pred_len=336,
+        local_feat_dim=0,
+        quantiles=(0.1, 0.5, 0.9),
+        hidden_size=32,
+        num_layers=1,
+        dropout=0.1,
+    ):
+        super().__init__()
+        self.pred_len = pred_len
+        self.local_feat_dim = local_feat_dim
+        self.quantiles = tuple(quantiles)
+        self.num_quantiles = len(quantiles)
+
+        in_dim = 2 + local_feat_dim
+        self.lstm = nn.LSTM(
+            input_size=in_dim,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0.0,
+        )
+        self.head = nn.Linear(hidden_size, self.num_quantiles)
+
+    def forward(self, y_pre, residual_history, x_local_dynamic=None):
+        """Forward pass.
+
+        Parameters
+        ----------
+        y_pre : Tensor, shape ``(B, pred_len)``
+        residual_history : Tensor, shape ``(B, pred_len)``
+        x_local_dynamic : Tensor or None, shape ``(B, pred_len, D_local)``
+
+        Returns
+        -------
+        Tensor of shape ``(B, pred_len, num_quantiles)``.
+        """
+        parts = [
+            y_pre.unsqueeze(-1),                    # (B, pred_len, 1)
+            residual_history.unsqueeze(-1),         # (B, pred_len, 1)
+        ]
+        if self.local_feat_dim > 0 and x_local_dynamic is not None:
+            parts.append(x_local_dynamic)           # (B, pred_len, D_local)
+
+        x = torch.cat(parts, dim=-1)                # (B, pred_len, in_dim)
+        out, _ = self.lstm(x)                       # (B, pred_len, hidden_size)
+        return self.head(out)                        # (B, pred_len, num_quantiles)
 
 
 # ============================================================================

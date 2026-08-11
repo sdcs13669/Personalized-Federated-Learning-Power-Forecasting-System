@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Generate client_config.yaml from processed CSVs + feature selection results.
 
-Partition rules (v1.2):
+Partition rules (v2.1 — by start time):
   - steel_ind: 1 client, whole dataset
   - tetouan_city: 3 clients (1 per zone)
-  - lcl_res: 2 clients — <730 days / >=730 days
-  - eld_ind: drop <365 days, then 3 clients — [365,730) / [730,1095) / >=1095
+  - lcl_res: 2 clients — start < 2012-01-01 / >= 2012-01-01
+  - eld_ind: 3 clients — start < 2012 / 2012 / >= 2013
 
 Output: fl_code/models/client_config.yaml
 """
@@ -33,11 +33,6 @@ LOCAL_FEATURES = {
     "tetouan_city": ["temperature", "humidity", "wind_speed",
                      "general_diffuse_flow", "diffuse_flow"],
 }
-
-
-def _valid_days(series: pd.Series) -> float:
-    """Number of days with valid data (30min steps)."""
-    return series.notna().sum() * 0.5 / 24
 
 
 def build_config() -> dict:
@@ -73,57 +68,66 @@ def build_config() -> dict:
     }
 
     # ---- lcl_res ----
-    df = pd.read_csv(PROC / "lcl_res.csv", low_memory=False)
+    df = pd.read_csv(PROC / "lcl_res.csv", low_memory=False, parse_dates=["datetime"])
     mac_cols = [c for c in df.columns if c.startswith("MAC")]
-    days = {c: _valid_days(df[c]) for c in mac_cols}
-    short = sorted([c for c, d in days.items() if d < 730])
-    long = sorted([c for c, d in days.items() if d >= 730])
+    # Partition by first valid datetime (smart meter enrollment wave)
+    early = []   # start < 2012-01-01
+    late = []    # start >= 2012-01-01
+    for c in mac_cols:
+        idx = df[c].first_valid_index()
+        if idx is not None and df.loc[idx, "datetime"] < pd.Timestamp("2012-01-01"):
+            early.append(c)
+        else:
+            late.append(c)
     config["lcl_res"] = {
         "public_features": PUBLIC_FEATURES,
         "local_features": LOCAL_FEATURES["lcl_res"],
         "clients": {
             "lcl_res_0": {
-                "description": f"lcl_res short sequences (<730 days), {len(short)} MACs",
-                "sequences": short,
+                "description": f"lcl_res early enrollment (<2012), {len(early)} MACs",
+                "sequences": sorted(early),
             },
             "lcl_res_1": {
-                "description": f"lcl_res long sequences (>=730 days), {len(long)} MACs",
-                "sequences": long,
+                "description": f"lcl_res late enrollment (>=2012), {len(late)} MACs",
+                "sequences": sorted(late),
             },
         },
     }
 
     # ---- eld_ind ----
-    df = pd.read_csv(PROC / "eld_ind.csv", low_memory=False)
+    df = pd.read_csv(PROC / "eld_ind.csv", low_memory=False, parse_dates=["datetime"])
     mt_cols = [c for c in df.columns if c.startswith("MT_")]
-    days = {c: _valid_days(df[c]) for c in mt_cols}
-    # Filter <365 days
-    valid = {c: d for c, d in days.items() if d >= 365}
-    dropped = sorted([c for c, d in days.items() if d < 365])
-    g1 = sorted([c for c, d in valid.items() if d < 730])       # [365, 730)
-    g2 = sorted([c for c, d in valid.items() if 730 <= d < 1095])  # [730, 1095)
-    g3 = sorted([c for c, d in valid.items() if d >= 1095])      # >= 1095
+    # Partition by first valid datetime (transformer commissioning year)
+    g1 = []   # start < 2012-01-01
+    g2 = []   # 2012-01-01 <= start < 2013-01-01
+    g3 = []   # start >= 2013-01-01
+    for c in mt_cols:
+        idx = df[c].first_valid_index()
+        if idx is None:
+            continue
+        start = df.loc[idx, "datetime"]
+        if start < pd.Timestamp("2012-01-01"):
+            g1.append(c)
+        elif start < pd.Timestamp("2013-01-01"):
+            g2.append(c)
+        else:
+            g3.append(c)
     config["eld_ind"] = {
         "public_features": PUBLIC_FEATURES,
         "local_features": LOCAL_FEATURES["eld_ind"],
         "clients": {
             "eld_ind_0": {
-                "description": f"eld_ind [365,730) days, {len(g1)} MTs",
-                "sequences": g1,
+                "description": f"eld_ind commissioned before 2012, {len(g1)} MTs",
+                "sequences": sorted(g1),
             },
             "eld_ind_1": {
-                "description": f"eld_ind [730,1095) days, {len(g2)} MTs",
-                "sequences": g2,
+                "description": f"eld_ind commissioned in 2012, {len(g2)} MTs",
+                "sequences": sorted(g2),
             },
             "eld_ind_2": {
-                "description": f"eld_ind >=1095 days, {len(g3)} MTs",
-                "sequences": g3,
+                "description": f"eld_ind commissioned >=2013, {len(g3)} MTs",
+                "sequences": sorted(g3),
             },
-        },
-        "dropped_sequences": {
-            "reason": "valid days < 365",
-            "count": len(dropped),
-            "sequences": dropped,
         },
     }
 

@@ -126,14 +126,17 @@ def _seq_length_stats(df: pd.DataFrame, seqs: list[str]) -> dict:
 
 
 def preprocess(df: pd.DataFrame, seqs: list[str],
-               local_cols: list[str] | None = None) -> tuple[pd.DataFrame, dict]:
+               local_cols: list[str] | None = None,
+               train_ratio: float = 0.8) -> tuple[pd.DataFrame, dict]:
     """Normalise load sequences and local features.
 
-    Load (power) columns — per-sequence:
-        1. log1p  →  2. (y - mean) / std  over the valid (non-NaN) range.
+    Load (power) columns — per-sequence, per-column:
+        1. log1p  →  2. (y - mean) / std.
+        μ/σ are computed **only on the training portion** (first
+        ``train_ratio`` of valid steps), then applied to all valid steps.
 
     Local features — per-column:
-        (x - mean) / std  over all rows where the column is valid.
+        (x - mean) / std, likewise μ/σ from training portion only.
 
     Parameters
     ----------
@@ -143,6 +146,8 @@ def preprocess(df: pd.DataFrame, seqs: list[str],
         Load column names.
     local_cols : list[str] or None
         Local feature column names (can be empty list).
+    train_ratio : float
+        Fraction of valid steps to use for computing μ/σ (default 0.8).
 
     Returns
     -------
@@ -163,26 +168,44 @@ def preprocess(df: pd.DataFrame, seqs: list[str],
             params[s] = {"log1p": True, "mean": 0.0, "std": 1.0}
             continue
         df_norm[s] = df_norm[s].astype(float)
-        y = df.loc[valid, s].values.astype(float)
-        y_log = np.log1p(y)
-        mu, sigma = y_log.mean(), y_log.std(ddof=0)
+
+        f = df[s].first_valid_index()
+        l = df[s].last_valid_index()
+        split = f + int((l - f + 1) * train_ratio)
+
+        # μ/σ from training portion only
+        train_mask = valid & (df.index >= f) & (df.index < split)
+        y_train = df.loc[train_mask, s].values.astype(float)
+        y_train_log = np.log1p(y_train)
+        mu, sigma = y_train_log.mean(), y_train_log.std(ddof=0)
         if sigma < 1e-9:
             sigma = 1.0
-        df_norm.loc[valid, s] = (y_log - mu) / sigma
+
+        # Apply to all valid values (train + test)
+        y_all = df.loc[valid, s].values.astype(float)
+        y_all_log = np.log1p(y_all)
+        df_norm.loc[valid, s] = (y_all_log - mu) / sigma
         params[s] = {"log1p": True, "mean": float(mu), "std": float(sigma)}
 
-    # ---- local feature columns (per-column) ----
+    # ---- local feature columns (per-column, μ/σ from first train_ratio of valid rows) ----
     for c in local_cols:
         valid = df[c].notna()
         if valid.sum() == 0:
             params[c] = {"log1p": False, "mean": 0.0, "std": 1.0}
             continue
         df_norm[c] = df_norm[c].astype(float)
-        x = df.loc[valid, c].values.astype(float)
-        mu, sigma = x.mean(), x.std(ddof=0)
+
+        valid_idx = df.index[valid]
+        n_train = int(len(valid_idx) * train_ratio)
+        train_idx = valid_idx[:n_train]
+
+        x_train = df.loc[train_idx, c].values.astype(float)
+        mu, sigma = x_train.mean(), x_train.std(ddof=0)
         if sigma < 1e-9:
             sigma = 1.0
-        df_norm.loc[valid, c] = (x - mu) / sigma
+
+        x_all = df.loc[valid, c].values.astype(float)
+        df_norm.loc[valid, c] = (x_all - mu) / sigma
         params[c] = {"log1p": False, "mean": float(mu), "std": float(sigma)}
 
     return df_norm, params
@@ -220,8 +243,8 @@ def make_sliding_windows(
     df: pd.DataFrame,
     seqs: list[str],
     public_cols: list[str],
-    input_steps: int = 1440,
-    pred_len: int = 336,
+    input_steps: int = 144,
+    pred_len: int = 6,
     stride: int = 1,
     train: bool = True,
     train_ratio: float = 0.8,
@@ -242,9 +265,9 @@ def make_sliding_windows(
     public_cols : list[str]
         Public feature column names.
     input_steps : int
-        Input window length (default 1440 = 30 days @ 30 min).
+        Input window length (default 144 = 3 days @ 30 min).
     pred_len : int
-        Forecast horizon (default 336 = 7 days @ 30 min).
+        Forecast horizon (default 6 = 3 hours @ 30 min).
     stride : int
         Step size between consecutive windows.
     train : bool
@@ -378,8 +401,8 @@ class LazySlidingWindowDataset:
     """
 
     def __init__(self, df: pd.DataFrame, seqs: list[str],
-                 public_cols: list[str], input_steps: int = 1440,
-                 pred_len: int = 336, stride: int = 48,
+                 public_cols: list[str], input_steps: int = 144,
+                 pred_len: int = 6, stride: int = 48,
                  train: bool = True, train_ratio: float = 0.8):
         self.pub_arr = df[public_cols].values.astype(np.float32)
         # Store all load columns as a single 2D array for fast slicing

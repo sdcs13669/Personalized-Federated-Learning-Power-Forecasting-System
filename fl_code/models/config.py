@@ -14,14 +14,14 @@ class TCNConfig:
     """Global TCN point-forecast model.
 
     Receptive field with defaults:
-        rf = 1 + 2*(k-1)*(2^L - 1) = 1 + 2*(2-1)*(2^10 - 1) = 2047 >= 1440
+        rf = 1 + 2*(k-1)*(2^L - 1) = 1 + 2*(2-1)*(2^7 - 1) = 255 >= 144
     """
 
     in_channels: int = 11            # 10 public (7 time + 3 one-hot) + 1 historical load
-    input_steps: int = 1440          # 30 days @ 30 min
-    pred_len: int = 336              # 7 days @ 30 min
+    input_steps: int = 144           # 3 days @ 30 min
+    pred_len: int = 6                # 3 hours @ 30 min
 
-    num_channels: tuple[int, ...] = (64,) * 10  # 10 layers, 64ch each
+    num_channels: tuple[int, ...] = (32,) * 7  # 7 layers, 32ch each
     kernel_size: int = 2
     dropout: float = 0.2
 
@@ -37,12 +37,12 @@ class CorrectorConfig:
 
     - ``"mlp"``  — :class:`MLPRC`:  per-step MLP, no temporal interaction
     - ``"lstm"`` — :class:`LSTMRC`: lightweight LSTM, sequential modelling
-    - ``"tcn"``  — :class:`TCNRC`:  causal TCN (rf=511 >= 336)
+    - ``"tcn"``  — :class:`TCNRC`:  causal TCN (rf=31 >= 6)
     """
 
     rc_type: Literal["mlp", "lstm", "tcn"] = "tcn"
 
-    pred_len: int = 336
+    pred_len: int = 6
     local_feat_dim: int = 0          # varies per dataset
     quantiles: tuple[float, ...] = (0.1, 0.5, 0.9)
     dropout: float = 0.1
@@ -55,7 +55,7 @@ class CorrectorConfig:
     lstm_num_layers: int = 1
 
     # TCN settings (used when rc_type="tcn")
-    num_channels: tuple[int, ...] = (16,) * 8  # 8 layers, rf=511
+    num_channels: tuple[int, ...] = (16,) * 4  # 4 layers, rf=31
     kernel_size: int = 2
 
     def to_dict(self):
@@ -71,8 +71,8 @@ class TCNCConfig:
 
     # Metadata
     time_step_minutes: int = 30
-    input_window_steps: int = 1440
-    output_window_steps: int = 336
+    input_window_steps: int = 144     # 3 days @ 30 min
+    output_window_steps: int = 6      # 3 hours @ 30 min
     quantile_loss_quantiles: tuple[float, ...] = (0.1, 0.5, 0.9)
 
     def to_dict(self):

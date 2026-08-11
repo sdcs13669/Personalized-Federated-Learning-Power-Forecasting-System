@@ -60,8 +60,8 @@ def evaluate(
     df: pd.DataFrame,
     seqs: list[str],
     public_cols: list[str],
-    input_steps: int = 1440,
-    pred_len: int = 336,
+    input_steps: int = 144,
+    pred_len: int = 6,
     stride: int = 48,
     train_ratio: float = 0.8,
     device: str = "cpu",
@@ -165,16 +165,16 @@ def plot_forecast(
     df: pd.DataFrame,
     seq_name: str,
     public_cols: list[str],
-    input_steps: int = 1440,
-    pred_len: int = 336,
+    input_steps: int = 144,
+    pred_len: int = 6,
     stride: int = 48,
-    display_steps: int = 672,
+    display_steps: int = 48,
     train_ratio: float = 0.8,
     device: str = "cpu",
     title: str | None = None,
     ax: plt.Axes | None = None,
 ):
-    """Plot predicted vs actual for *display_steps* (default 14 days).
+    """Plot predicted vs actual for *display_steps* (default 48 = 1 day).
 
     Uses the same rolling-forecast protocol as :func:`evaluate`: at each
     step, predicts *pred_len* steps ahead, keeps only the first *stride*
@@ -240,7 +240,7 @@ def plot_forecast(
     ax.plot(t, preds, label="Predicted", linewidth=1.0, color="#ff7f0e", alpha=0.85)
     ax.set_xlabel("Days from test start")
     ax.set_ylabel("Normalised load")
-    ax.set_title(title or f"{seq_name} — {display_steps // 48}-day forecast")
+    ax.set_title(title or f"{seq_name} — {display_steps} steps forecast")
     ax.legend()
     ax.grid(True, alpha=0.3)
 

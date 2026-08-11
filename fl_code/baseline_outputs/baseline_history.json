@@ -1,0 +1,34 @@
+{
+  "args": {
+    "rounds": "1",
+    "local_epochs": "1",
+    "lr": "0.001",
+    "batch_size": "64",
+    "stride": "6",
+    "eval_seqs": "None",
+    "max_seqs": "None",
+    "clients": "['steel_ind_0']"
+  },
+  "num_clients": 1,
+  "total_train_windows": 2312,
+  "model_params": 28806,
+  "training_time_s": 11.5,
+  "final_metrics": {
+    "wape": 0.7100039720535278,
+    "avg_mae": 0.6483778953552246,
+    "client_metrics": {
+      "steel_ind_0": {
+        "mae": 0.6483778953552246,
+        "rmse": 0.8252420425415039,
+        "r2": 0.26369357109069824,
+        "n_train": 2312
+      }
+    }
+  },
+  "flower_history": {
+    "losses_centralized": [],
+    "losses_distributed": [],
+    "metrics_centralized": {},
+    "metrics_distributed": {}
+  }
+}

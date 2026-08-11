@@ -1,0 +1,24 @@
+{
+  "global_model": "fl_code\\baseline_outputs\\best_global_tcn.pt",
+  "args": {
+    "global_model": "fl_code/baseline_outputs/best_global_tcn.pt",
+    "epochs": "5",
+    "lr": "0.001",
+    "batch_size": "256",
+    "stride": "6",
+    "eval_seqs": "None",
+    "max_seqs": "None",
+    "clients": "['steel_ind_0']"
+  },
+  "results": {
+    "steel_ind_0": {
+      "mae_baseline": 0.6483778953552246,
+      "mae_personalized": 0.4256744980812073,
+      "improvement_pct": 34.35,
+      "n_windows": 2312,
+      "n_seqs": 1,
+      "local_dim": 4,
+      "corrector_type": "tcn"
+    }
+  }
+}

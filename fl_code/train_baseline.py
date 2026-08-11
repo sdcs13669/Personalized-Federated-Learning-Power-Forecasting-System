@@ -38,7 +38,7 @@ from fl_code.models import TCNConfig, build_tcn
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_CONFIG_PATH = ROOT / "fl_code" / "models" / "client_config.yaml"
-OUTPUT_DIR = ROOT / "fl_code" / "outputs"
+OUTPUT_DIR = ROOT / "fl_code" / "baseline_outputs"
 
 
 # ============================================================================

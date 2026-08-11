@@ -5,8 +5,8 @@
 
 global:
   time_step_minutes: 30
-  input_window_steps: 1440    # 30天 × 48步/天
-  output_window_steps: 336    # 7天 × 48步/天
+  input_window_steps: 144     # 3天 × 48步/天
+  output_window_steps: 6      # 3小时 × 2步/小时
 
 # ============================================================
 # 阶段一: Global TCN — FedAvg 聚合，输出点预测 Y_pre
@@ -14,22 +14,19 @@ global:
 global_model:
   name: "TCN"
   in_channels: 11             # 10 公共特征（7 时间 + 3 one-hot 类别）+ 1 历史负荷
-  input_steps: 1440
-  pred_len: 336
-  num_channels:               # 10 层，rf=2047 >= 1440
-    - 64  # dil=1
-    - 64  # dil=2
-    - 64  # dil=4
-    - 64  # dil=8
-    - 64  # dil=16
-    - 64  # dil=32
-    - 64  # dil=64
-    - 64  # dil=128
-    - 64  # dil=256
-    - 64  # dil=512
+  input_steps: 144
+  pred_len: 6
+  num_channels:               # 7 层，rf=255 >= 144
+    - 32  # dil=1
+    - 32  # dil=2
+    - 32  # dil=4
+    - 32  # dil=8
+    - 32  # dil=16
+    - 32  # dil=32
+    - 32  # dil=64
   kernel_size: 2
   dropout: 0.2
-  output_head: "last_step → Linear(64, 336)"
+  output_head: "last_step → Linear(32, 6)"
 
 # ============================================================
 # 阶段二: Residual Corrector — 本地个性修正（永不上传）
@@ -38,7 +35,7 @@ corrector:
   rc_type: "tcn"              # "tcn" | "mlp"
 
   # --- shared settings ---
-  pred_len: 336
+  pred_len: 6
   local_feat_dim: 0           # 由 dataset 决定 (eld=0, lcl=1, tetouan=5, steel=4)
   quantiles: [0.1, 0.5, 0.9]
   dropout: 0.1
@@ -47,30 +44,26 @@ corrector:
   hidden_dims: [64, 32]       # MLP 隐藏层: 2+D_local → 64 → 32 → 3
 
   # --- TCN (rc_type=tcn) ---
-  num_channels:               # 8 层 + 自动追加 3，rf=511 >= 336
+  num_channels:               # 4 层 + 自动追加 3，rf=31 >= 6
     - 16  # dil=1
     - 16  # dil=2
     - 16  # dil=4
     - 16  # dil=8
-    - 16  # dil=16
-    - 16  # dil=32
-    - 16  # dil=64
-    - 16  # dil=128
   kernel_size: 2
 
   input:
-    - Y_pre              [336, 1]   # 全局模型点预测
-    - residual_history   [336, 1]   # 上一次预测的残差
-    - x_local_dynamic    [336, D]   # 本地动态特征（可选）
+    - Y_pre              [6, 1]   # 全局模型点预测
+    - residual_history   [6, 1]   # 上一次预测的残差
+    - x_local_dynamic    [6, D]   # 本地动态特征（可选）
   output:
-    shape: [Batch, 336, 3]
+    shape: [Batch, 6, 3]
     name: "E_corr"
 
 # ============================================================
 # 最终输出与损失
 # ============================================================
 prediction:
-  Y_final: "Y_pre + E_corr  →  [Batch, 336, 3]"
+  Y_final: "Y_pre + E_corr  →  [Batch, 6, 3]"
 
 loss:
   stage1: "MAE"

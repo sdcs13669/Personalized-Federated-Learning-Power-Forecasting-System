@@ -41,7 +41,7 @@ class MLPRC(nn.Module):
 
     def __init__(
         self,
-        pred_len=336,
+        pred_len=6,
         local_feat_dim=0,
         quantiles=(0.1, 0.5, 0.9),
         hidden_dims=(64, 32),
@@ -118,7 +118,7 @@ class LSTMRC(nn.Module):
 
     def __init__(
         self,
-        pred_len=336,
+        pred_len=6,
         local_feat_dim=0,
         quantiles=(0.1, 0.5, 0.9),
         hidden_size=32,
@@ -195,7 +195,7 @@ class TCNRC(nn.Module):
 
     def __init__(
         self,
-        pred_len=336,
+        pred_len=6,
         local_feat_dim=0,
         quantiles=(0.1, 0.5, 0.9),
         num_channels=(16,) * 8,

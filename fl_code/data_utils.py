@@ -9,6 +9,7 @@ from __future__ import annotations
 import yaml
 import numpy as np
 import pandas as pd
+import torch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -212,6 +213,236 @@ def _find_client(config: dict, client_id: str) -> tuple[str | None, dict | None]
 
 
 # ============================================================================
+# Sliding-window sample generation
+# ============================================================================
+
+def make_sliding_windows(
+    df: pd.DataFrame,
+    seqs: list[str],
+    public_cols: list[str],
+    input_steps: int = 1440,
+    pred_len: int = 336,
+    stride: int = 1,
+    train: bool = True,
+    train_ratio: float = 0.8,
+    local_cols: list[str] | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, list[dict]]:
+    """Generate {X, y} samples via sliding window over each sequence.
+
+    For each load sequence, a window of ``input_steps + pred_len`` slides
+    across its valid (non-NaN) range at ``stride`` intervals.  Windows
+    containing any NaN in the load or feature columns are skipped.
+
+    Parameters
+    ----------
+    df : DataFrame
+        From :func:`load_client_data` (optionally after :func:`preprocess`).
+    seqs : list[str]
+        Load column names.
+    public_cols : list[str]
+        Public feature column names.
+    input_steps : int
+        Input window length (default 1440 = 30 days @ 30 min).
+    pred_len : int
+        Forecast horizon (default 336 = 7 days @ 30 min).
+    stride : int
+        Step size between consecutive windows.
+    train : bool
+        True → samples from train portion only; False → test portion.
+    train_ratio : float
+        Fraction of each sequence's valid steps to use for training.
+    local_cols : list[str] or None
+        Local feature column names (used by Residual Corrector).
+
+    Returns
+    -------
+    X : np.ndarray, shape ``(N, public_dim + 1, input_steps)``
+        Public features + historical load for the input window.
+    y : np.ndarray, shape ``(N, pred_len)``
+        Target load for the forecast horizon.
+    X_local : np.ndarray or None, shape ``(N, pred_len, local_dim)``
+        Local features aligned with the output window (None if no local cols).
+    meta : list[dict]
+        Per-sample metadata: ``seq_name``, ``window_start`` (row index).
+    """
+    local_cols = local_cols or []
+
+    # Pre-compute feature matrices for fast slicing
+    pub_arr = df[public_cols].values.astype(np.float32)          # (T, pub_dim)
+    loc_arr = df[local_cols].values.astype(np.float32) if local_cols else None  # (T, loc_dim)
+
+    X_list, y_list, loc_list, meta = [], [], [], []
+
+    for s in seqs:
+        f = df[s].first_valid_index()
+        l = df[s].last_valid_index()
+        if f is None or l is None:
+            continue
+
+        load = df[s].values.astype(np.float32)                   # (T,)
+        valid_len = l - f + 1
+        split = f + int(valid_len * train_ratio)
+        total = input_steps + pred_len
+
+        if train:
+            win_start = f
+            win_end = split - total + 1      # entire window before split
+        else:
+            win_start = split
+            win_end = l - total + 2          # entire window within [split, l]
+
+        for i in range(max(win_start, 0), max(win_end, 0), stride):
+            in_end = i + input_steps
+            out_end = in_end + pred_len
+
+            # Skip if load has NaN in window
+            if np.isnan(load[i:out_end]).any():
+                continue
+            # Skip if public features have NaN in input window
+            if np.isnan(pub_arr[i:in_end]).any():
+                continue
+            # Skip if local features have NaN in output window
+            if loc_arr is not None and np.isnan(loc_arr[in_end:out_end]).any():
+                continue
+
+            X_pub = pub_arr[i:in_end].T                               # (pub_dim, input_steps)
+            X_load = load[i:in_end][np.newaxis, :]                     # (1, input_steps)
+            X_list.append(np.concatenate([X_pub, X_load], axis=0))     # (pub_dim+1, input_steps)
+            y_list.append(load[in_end:out_end])                        # (pred_len,)
+
+            if loc_arr is not None:
+                loc_list.append(loc_arr[in_end:out_end])               # (pred_len, loc_dim)
+
+            meta.append({"seq": s, "window_start": i})
+
+    X = np.stack(X_list, axis=0) if X_list else np.empty((0, len(public_cols) + 1, input_steps), dtype=np.float32)
+    y = np.stack(y_list, axis=0) if y_list else np.empty((0, pred_len), dtype=np.float32)
+    X_local = np.stack(loc_list, axis=0) if loc_list else None
+
+    return X, y, X_local, meta
+
+
+class PowerDataset:
+    """PyTorch Dataset wrapping sliding-window samples.
+
+    Usage::
+
+        X, y, X_local, meta = make_sliding_windows(...)
+        ds = PowerDataset(X, y, X_local)
+        loader = DataLoader(ds, batch_size=64, shuffle=True)
+        for batch_X, batch_y in loader:
+            ...
+
+    Parameters
+    ----------
+    X : np.ndarray, shape ``(N, C, T_in)``
+    y : np.ndarray, shape ``(N, T_out)``
+    X_local : np.ndarray or None, shape ``(N, T_out, D_local)``
+    """
+
+    def __init__(self, X: np.ndarray, y: np.ndarray,
+                 X_local: np.ndarray | None = None):
+        self.X = torch.from_numpy(X)
+        self.y = torch.from_numpy(y)
+        self.X_local = torch.from_numpy(X_local) if X_local is not None else None
+
+    def __len__(self) -> int:
+        return len(self.X)
+
+    def __getitem__(self, idx: int):
+        if self.X_local is not None:
+            return self.X[idx], self.y[idx], self.X_local[idx]
+        return self.X[idx], self.y[idx]
+
+
+class LazySlidingWindowDataset:
+    """Memory-efficient sliding-window Dataset for clients with many sequences.
+
+    Stores only window positions (a few MB) and generates X/y arrays on
+    :meth:`__getitem__`.  Suitable for clients like ``lcl_res_0`` (174
+    sequences → ~98K windows with stride=48).
+
+    Parameters
+    ----------
+    df : DataFrame
+        Normalised client data (from :func:`preprocess`).
+    seqs : list[str]
+        Load column names.
+    public_cols : list[str]
+        Public feature column names.
+    input_steps : int
+    pred_len : int
+    stride : int
+    train : bool
+    train_ratio : float
+    """
+
+    def __init__(self, df: pd.DataFrame, seqs: list[str],
+                 public_cols: list[str], input_steps: int = 1440,
+                 pred_len: int = 336, stride: int = 48,
+                 train: bool = True, train_ratio: float = 0.8):
+        self.pub_arr = df[public_cols].values.astype(np.float32)
+        # Store all load columns as a single 2D array for fast slicing
+        self.load_arr = df[seqs].values.astype(np.float32)  # (T, num_seqs)
+        self.seq_idx_map = {s: i for i, s in enumerate(seqs)}
+        self.input_steps = input_steps
+        self.pred_len = pred_len
+        self.total = input_steps + pred_len
+
+        self.windows: list[tuple[int, int]] = []  # (seq_idx, start_pos)
+        n_skipped = 0
+
+        for si, s in enumerate(seqs):
+            col = self.load_arr[:, si]
+            f = df[s].first_valid_index()
+            l = df[s].last_valid_index()
+            if f is None or l is None:
+                continue
+
+            valid_len = l - f + 1
+            split = f + int(valid_len * train_ratio)
+
+            if train:
+                win_start = f
+                win_end = split - self.total + 1
+            else:
+                win_start = split
+                win_end = l - self.total + 2
+
+            for i in range(max(win_start, 0), max(win_end, 0), stride):
+                in_end = i + input_steps
+                out_end = in_end + pred_len
+                if np.isnan(col[i:out_end]).any():
+                    n_skipped += 1
+                    continue
+                if np.isnan(self.pub_arr[i:in_end]).any():
+                    n_skipped += 1
+                    continue
+                self.windows.append((si, i))
+
+        if n_skipped:
+            import sys
+            print(f"[LazySlidingWindowDataset] skipped {n_skipped} windows with NaN "
+                  f"({len(self.windows)} valid, train={train})", file=sys.stderr)
+
+    def __len__(self) -> int:
+        return len(self.windows)
+
+    def __getitem__(self, idx: int):
+        si, start = self.windows[idx]
+        in_end = start + self.input_steps
+        out_end = in_end + self.pred_len
+
+        col = self.load_arr[:, si]
+        X_pub = self.pub_arr[start:in_end].T.copy()           # (pub_dim, T_in)
+        X_load = col[start:in_end][np.newaxis, :]              # (1, T_in)
+        X = np.concatenate([X_pub, X_load], axis=0)            # (C, T_in)
+        y = col[in_end:out_end].copy()                         # (T_out,)
+
+        return torch.from_numpy(X), torch.from_numpy(y)
+
+
+# ============================================================================
 # Train / test split
 # ============================================================================
 
@@ -319,3 +550,17 @@ if __name__ == "__main__":
     print()
     print("Normalised head:")
     print(df_norm.head(5).to_string())
+    print()
+
+    # Sliding-window sample generation
+    X_train, y_train, _, meta_train = make_sliding_windows(
+        df_norm, seq_cols, info["public_features"],
+        stride=48, train=True, local_cols=info["local_features"],
+    )
+    X_test, y_test, _, meta_test = make_sliding_windows(
+        df_norm, seq_cols, info["public_features"],
+        stride=48, train=False, local_cols=info["local_features"],
+    )
+    print("--- Sliding windows (stride=48) ---")
+    print(f"Train samples: {len(X_train)}, X shape: {X_train.shape}, y shape: {y_train.shape}")
+    print(f"Test samples:  {len(X_test)}, X shape: {X_test.shape}, y shape: {y_test.shape}")

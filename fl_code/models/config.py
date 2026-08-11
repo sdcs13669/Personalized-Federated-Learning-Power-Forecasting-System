@@ -1,48 +1,29 @@
-"""Dataclass-based model configuration and factory functions.
+"""Dataclass model configuration and factory functions.
 
-Matches the architecture defined in ``fl_code/models/config.yaml``:
-
-    Global TCN (FedAvg)  →  Y_pre  (point forecast)
-         +
-    Local Residual Corrector (per-client)  →  E_corr  (quantile corrections)
-         =
-    Y_final = Y_pre + E_corr
+Matches ``fl_code/models/config.yaml``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from typing import Optional
+from typing import Literal
 
-
-# ============================================================================
-# Config dataclasses
-# ============================================================================
 
 @dataclass
-class GlobalTCNConfig:
-    """Configuration for :class:`GlobalTCN` — the federated point-forecast model.
+class TCNConfig:
+    """Global TCN point-forecast model.
 
-    Matches ``config.yaml §2 main_model``.
+    Receptive field with defaults:
+        rf = 1 + 2*(k-1)*(2^L - 1) = 1 + 2*(2-1)*(2^10 - 1) = 2047 >= 1440
     """
 
-    # Input / output
-    in_channels: int = 8           # public features: 7 time-derived + 1 category
-    input_steps: int = 1440        # 30 days @ 30 min
-    pred_len: int = 336            # 7 days @ 30 min
+    in_channels: int = 9             # 8 public features + 1 historical load
+    input_steps: int = 1440          # 30 days @ 30 min
+    pred_len: int = 336              # 7 days @ 30 min
 
-    # TCN encoder
-    hidden_channels: int | list[int] = 64
-    out_channels: int = 64
-    num_layers: int = 4
-    kernel_size: int = 3
-    dilation_base: int = 2
+    num_channels: tuple[int, ...] = (64,) * 10  # 10 layers, 64ch each
+    kernel_size: int = 2
     dropout: float = 0.2
-    use_weight_norm: bool = True
-    use_batch_norm: bool = True
-
-    # Decoder MLP (encoder summary → pred_len)
-    decoder_hidden: tuple[int, ...] = (256,)
 
     def to_dict(self):
         return asdict(self)
@@ -50,36 +31,40 @@ class GlobalTCNConfig:
 
 @dataclass
 class CorrectorConfig:
-    """Configuration for :class:`ResidualCorrector` — per-client, never shared.
+    """Per-client residual corrector (never shared).
 
-    Matches ``config.yaml §3 residual_corrector``.
+    Supports two architectures selected by ``rc_type``:
+
+    - ``"mlp"`` — :class:`MLPRC`: per-step MLP, no temporal interaction
+    - ``"tcn"`` — :class:`TCNRC`: lightweight causal TCN (rf=511 >= 336)
     """
 
-    pred_len: int = 336
-    local_feat_dim: int = 0       # varies per dataset: 0..6
-    quantiles: tuple[float, ...] = (0.1, 0.5, 0.9)
+    rc_type: Literal["mlp", "tcn"] = "tcn"
 
-    # Correction TCN (lighter than the global encoder)
-    hidden_channels: int = 32
-    num_layers: int = 3
-    kernel_size: int = 5
+    pred_len: int = 336
+    local_feat_dim: int = 0          # varies per dataset
+    quantiles: tuple[float, ...] = (0.1, 0.5, 0.9)
     dropout: float = 0.1
+
+    # MLP settings (used when rc_type="mlp")
+    hidden_dims: tuple[int, ...] = (64, 32)
+
+    # TCN settings (used when rc_type="tcn")
+    num_channels: tuple[int, ...] = (16,) * 8  # 8 layers, rf=511
+    kernel_size: int = 2
 
     def to_dict(self):
         return asdict(self)
 
 
 @dataclass
-class FedTCNConfig:
-    """Top-level configuration combining global model + local corrector.
+class TCNCConfig:
+    """Top-level two-stage federated config."""
 
-    Matches the complete ``config.yaml``.
-    """
-
-    global_model: GlobalTCNConfig = field(default_factory=GlobalTCNConfig)
+    global_model: TCNConfig = field(default_factory=TCNConfig)
     corrector: CorrectorConfig = field(default_factory=CorrectorConfig)
 
-    # Metadata (from config.yaml §1)
+    # Metadata
     time_step_minutes: int = 30
     input_window_steps: int = 1440
     output_window_steps: int = 336
@@ -96,51 +81,55 @@ class FedTCNConfig:
 # Factory functions
 # ============================================================================
 
-def build_fed_tcn(config: FedTCNConfig):
-    """Build the complete two-stage :class:`FedTCN`.
+def build_tcn(config: TCNConfig):
+    """Build a :class:`TCN` for point forecasting (Phase 2 baseline)."""
+    from .tcn import TCN
 
-    Returns a :class:`FedTCN` instance ready for training.
-    """
-    from .tcnm import FedTCN
-
-    global_kwargs = config.global_model.to_dict()
-    corr_kwargs = config.corrector.to_dict()
-
-    return FedTCN(
-        global_config=global_kwargs,
-        corrector_config=corr_kwargs,
+    return TCN(
+        input_size=config.in_channels,
+        output_size=config.pred_len,
+        num_channels=list(config.num_channels),
+        kernel_size=config.kernel_size,
+        dropout=config.dropout,
     )
 
 
-def build_global_model(config: FedTCNConfig):
-    """Build only the global :class:`GlobalTCN` (for baseline evaluation).
+def build_corrector(config: CorrectorConfig):
+    """Build a :class:`MLPRC` or :class:`TCNRC` based on ``rc_type`` (Phase 3)."""
+    from .rc import MLPRC, TCNRC
 
-    Returns a standalone :class:`GlobalTCN` that outputs ``Y_pre`` only,
-    without the local corrector.
-    """
-    from .tcnm import GlobalTCN
+    if config.rc_type == "mlp":
+        return MLPRC(
+            pred_len=config.pred_len,
+            local_feat_dim=config.local_feat_dim,
+            quantiles=config.quantiles,
+            hidden_dims=config.hidden_dims,
+            dropout=config.dropout,
+        )
+    else:
+        return TCNRC(
+            pred_len=config.pred_len,
+            local_feat_dim=config.local_feat_dim,
+            quantiles=config.quantiles,
+            num_channels=config.num_channels,
+            kernel_size=config.kernel_size,
+            dropout=config.dropout,
+        )
 
-    kwargs = config.global_model.to_dict()
-    return GlobalTCN(**kwargs)
 
+def build_fed_tcn(config: TCNCConfig):
+    """Build the full two-stage :class:`TCNC` (Phase 3)."""
+    from .tcn import TCN
+    from .tcnc import TCNC
 
-def build_local_corrector(config: FedTCNConfig, local_feat_dim: int):
-    """Build only the :class:`ResidualCorrector` for a specific client.
+    global_model = TCN(
+        input_size=config.global_model.in_channels,
+        output_size=config.global_model.pred_len,
+        num_channels=list(config.global_model.num_channels),
+        kernel_size=config.global_model.kernel_size,
+        dropout=config.global_model.dropout,
+    )
 
-    Parameters
-    ----------
-    config : FedTCNConfig
-        Top-level config.
-    local_feat_dim : int
-        Number of local dynamic feature channels for *this* client
-        (differs by dataset: 0 for eld_ind, 1 for lcl_res, 5 for tetouan, 6 for steel_ind).
+    corrector = build_corrector(config.corrector)
 
-    Returns
-    -------
-    :class:`ResidualCorrector`
-    """
-    from .tcnm import ResidualCorrector
-
-    kwargs = config.corrector.to_dict()
-    kwargs["local_feat_dim"] = local_feat_dim
-    return ResidualCorrector(**kwargs)
+    return TCNC(global_model, corrector)

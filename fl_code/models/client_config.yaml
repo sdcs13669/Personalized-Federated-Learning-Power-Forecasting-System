@@ -7,7 +7,9 @@ steel_ind:
   - is_weekend
   - month_sin
   - month_cos
-  - category_id
+  - cat_residential
+  - cat_transformer
+  - cat_industrial
   local_features:
   - co2
   - lagging_reactive_power

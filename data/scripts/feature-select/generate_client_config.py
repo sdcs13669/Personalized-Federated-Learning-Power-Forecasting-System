@@ -20,10 +20,13 @@ ROOT = Path(__file__).resolve().parents[3]
 PROC = ROOT / "data" / "processed"
 OUT = ROOT / "fl_code" / "models" / "client_config.yaml"
 
+# category_id is one-hot encoded during preprocessing:
+#   0=residential → [1,0,0]   1=transformer → [0,1,0]   2=steel → [0,0,1]
+CATEGORY_ONEHOT = ["cat_residential", "cat_transformer", "cat_industrial"]
 PUBLIC_FEATURES = [
     "hour_sin", "hour_cos", "dow_sin", "dow_cos",
-    "is_weekend", "month_sin", "month_cos", "category_id",
-]
+    "is_weekend", "month_sin", "month_cos",
+] + CATEGORY_ONEHOT
 
 # Feature selection results (from SHAP reports)
 LOCAL_FEATURES = {

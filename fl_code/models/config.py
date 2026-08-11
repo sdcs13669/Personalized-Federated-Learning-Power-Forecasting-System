@@ -17,7 +17,7 @@ class TCNConfig:
         rf = 1 + 2*(k-1)*(2^L - 1) = 1 + 2*(2-1)*(2^10 - 1) = 2047 >= 1440
     """
 
-    in_channels: int = 9             # 8 public features + 1 historical load
+    in_channels: int = 11            # 10 public (7 time + 3 one-hot) + 1 historical load
     input_steps: int = 1440          # 30 days @ 30 min
     pred_len: int = 336              # 7 days @ 30 min
 

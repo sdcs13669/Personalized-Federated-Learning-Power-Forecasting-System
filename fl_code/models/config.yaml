@@ -13,7 +13,7 @@ global:
 # ============================================================
 global_model:
   name: "TCN"
-  in_channels: 9              # 8 公共特征 + 1 历史负荷
+  in_channels: 11             # 10 公共特征（7 时间 + 3 one-hot 类别）+ 1 历史负荷
   input_steps: 1440
   pred_len: 336
   num_channels:               # 10 层，rf=2047 >= 1440

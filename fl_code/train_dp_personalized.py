@@ -37,6 +37,10 @@ from fl_code.models import (
     build_tcn, build_corrector,
 )
 from fl_code.models.rc import quantile_loss
+from fl_code.config import (
+    STRIDE, CORRECTOR_EPOCHS, CORRECTOR_LR, CORRECTOR_BATCH_SIZE,
+    DP_NOISE_MULTIPLIERS, DP_MAX_GRAD_NORM, DP_DELTA,
+)
 
 # Import shared Phase 3 components
 from fl_code.train_personalized import (
@@ -377,20 +381,21 @@ if __name__ == "__main__":
         help="Path to frozen Global TCN checkpoint",
     )
     parser.add_argument(
-        "--epochs", type=int, default=30,
-        help="Corrector training epochs per run (default: 30)",
+        "--epochs", type=int, default=CORRECTOR_EPOCHS,
+        help=f"Corrector training epochs per run (default: {CORRECTOR_EPOCHS})",
     )
     parser.add_argument(
-        "--lr", type=float, default=1e-3,
-        help="Learning rate (default: 1e-3)",
+        "--lr", type=float, default=CORRECTOR_LR,
+        help=f"Learning rate (default: {CORRECTOR_LR})",
     )
     parser.add_argument(
-        "--batch-size", type=int, default=256,
-        help="Batch size (default: 256)",
+        "--batch-size", type=int, default=CORRECTOR_BATCH_SIZE,
+        help=f"Batch size (default: {CORRECTOR_BATCH_SIZE})",
     )
     parser.add_argument(
-        "--stride", type=int, default=48,
-        help="Sliding-window stride (default: 48)",
+        "--stride", type=int, default=STRIDE,
+        help=f"Sliding-window stride (default: {STRIDE}, "
+             f"= pred_len for continuous coverage)",
     )
     parser.add_argument(
         "--eval-seqs", type=int, default=None,
@@ -408,16 +413,16 @@ if __name__ == "__main__":
     # DP-specific
     parser.add_argument(
         "--noise-multipliers", type=float, nargs="+",
-        default=[0.5, 1.0, 2.0, 5.0],
-        help="Noise multipliers σ for DP-SGD (default: 0.5 1.0 2.0 5.0)",
+        default=list(DP_NOISE_MULTIPLIERS),
+        help=f"Noise multipliers σ for DP-SGD (default: {' '.join(map(str, DP_NOISE_MULTIPLIERS))})",
     )
     parser.add_argument(
-        "--max-grad-norm", type=float, default=1.0,
-        help="Per-sample gradient clipping norm C (default: 1.0)",
+        "--max-grad-norm", type=float, default=DP_MAX_GRAD_NORM,
+        help=f"Per-sample gradient clipping norm C (default: {DP_MAX_GRAD_NORM})",
     )
     parser.add_argument(
-        "--delta", type=float, default=1e-5,
-        help="DP delta parameter — should be < 1/N (default: 1e-5)",
+        "--delta", type=float, default=DP_DELTA,
+        help=f"DP delta parameter — should be < 1/N (default: {DP_DELTA})",
     )
     parser.add_argument(
         "--rc-type", type=str, default="mlp",

@@ -9,6 +9,10 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
+from fl_code.config import (
+    INPUT_STEPS, PRED_LEN, STRIDE, TRAIN_RATIO, DISPLAY_STEPS,
+)
+
 
 # ============================================================================
 # Training
@@ -60,10 +64,10 @@ def evaluate(
     df: pd.DataFrame,
     seqs: list[str],
     public_cols: list[str],
-    input_steps: int = 144,
-    pred_len: int = 6,
-    stride: int = 48,
-    train_ratio: float = 0.8,
+    input_steps: int = INPUT_STEPS,
+    pred_len: int = PRED_LEN,
+    stride: int = STRIDE,
+    train_ratio: float = TRAIN_RATIO,
     device: str = "cpu",
 ) -> dict:
     """Rolling-forecast evaluation over all sequences.
@@ -165,11 +169,11 @@ def plot_forecast(
     df: pd.DataFrame,
     seq_name: str,
     public_cols: list[str],
-    input_steps: int = 144,
-    pred_len: int = 6,
-    stride: int = 48,
-    display_steps: int = 48,
-    train_ratio: float = 0.8,
+    input_steps: int = INPUT_STEPS,
+    pred_len: int = PRED_LEN,
+    stride: int = STRIDE,
+    display_steps: int = DISPLAY_STEPS,
+    train_ratio: float = TRAIN_RATIO,
     device: str = "cpu",
     title: str | None = None,
     ax: plt.Axes | None = None,

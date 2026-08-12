@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from typing import Literal
 
+from ..config import INPUT_STEPS, PRED_LEN
+
 
 @dataclass
 class TCNConfig:
@@ -18,8 +20,8 @@ class TCNConfig:
     """
 
     in_channels: int = 11            # 10 public (7 time + 3 one-hot) + 1 historical load
-    input_steps: int = 144           # 3 days @ 30 min
-    pred_len: int = 6                # 3 hours @ 30 min
+    input_steps: int = INPUT_STEPS   # from fl_code/config.py
+    pred_len: int = PRED_LEN         # from fl_code/config.py
 
     num_channels: tuple[int, ...] = (32,) * 7  # 7 layers, 32ch each
     kernel_size: int = 2
@@ -42,7 +44,7 @@ class CorrectorConfig:
 
     rc_type: Literal["mlp", "lstm", "tcn"] = "tcn"
 
-    pred_len: int = 6
+    pred_len: int = PRED_LEN         # from fl_code/config.py
     local_feat_dim: int = 0          # varies per dataset
     quantiles: tuple[float, ...] = (0.1, 0.5, 0.9)
     dropout: float = 0.1
@@ -71,8 +73,8 @@ class TCNCConfig:
 
     # Metadata
     time_step_minutes: int = 30
-    input_window_steps: int = 144     # 3 days @ 30 min
-    output_window_steps: int = 6      # 3 hours @ 30 min
+    input_window_steps: int = INPUT_STEPS   # from fl_code/config.py
+    output_window_steps: int = PRED_LEN     # from fl_code/config.py
     quantile_loss_quantiles: tuple[float, ...] = (0.1, 0.5, 0.9)
 
     def to_dict(self):

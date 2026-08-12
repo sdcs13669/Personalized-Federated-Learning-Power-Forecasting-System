@@ -35,6 +35,10 @@ from fl_code.data_utils import (
 )
 from fl_code.train_eval_utils import train_epoch, evaluate
 from fl_code.models import TCNConfig, build_tcn
+from fl_code.config import (
+    STRIDE, BASELINE_ROUNDS, BASELINE_LOCAL_EPOCHS,
+    BASELINE_LR, BASELINE_BATCH_SIZE,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_CONFIG_PATH = ROOT / "fl_code" / "models" / "client_config.yaml"
@@ -325,16 +329,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Phase 2: FedAvg GlobalTCN Baseline Training (Flower backend)",
     )
-    parser.add_argument("--rounds", type=int, default=20,
-                        help="Communication rounds (default: 20)")
-    parser.add_argument("--local-epochs", type=int, default=1,
-                        help="Local SGD epochs per round (default: 1)")
-    parser.add_argument("--lr", type=float, default=1e-3,
-                        help="Learning rate (default: 1e-3)")
-    parser.add_argument("--batch-size", type=int, default=64,
-                        help="Batch size (default: 64)")
-    parser.add_argument("--stride", type=int, default=48,
-                        help="Sliding-window stride (default: 48)")
+    parser.add_argument("--rounds", type=int, default=BASELINE_ROUNDS,
+                        help=f"Communication rounds (default: {BASELINE_ROUNDS})")
+    parser.add_argument("--local-epochs", type=int,
+                        default=BASELINE_LOCAL_EPOCHS,
+                        help=f"Local SGD epochs per round (default: {BASELINE_LOCAL_EPOCHS})")
+    parser.add_argument("--lr", type=float, default=BASELINE_LR,
+                        help=f"Learning rate (default: {BASELINE_LR})")
+    parser.add_argument("--batch-size", type=int, default=BASELINE_BATCH_SIZE,
+                        help=f"Batch size (default: {BASELINE_BATCH_SIZE})")
+    parser.add_argument("--stride", type=int, default=STRIDE,
+                        help=f"Sliding-window stride (default: {STRIDE}, "
+                             f"= pred_len for continuous coverage)")
     parser.add_argument("--eval-seqs", type=int, default=None,
                         help="Cap eval to first N sequences per client (default: all)")
     parser.add_argument("--max-seqs", type=int, default=None,

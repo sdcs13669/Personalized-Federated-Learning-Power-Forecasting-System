@@ -15,6 +15,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "fl_code" / "models" / "client_config.yaml"
 
+try:
+    from fl_code.config import INPUT_STEPS, PRED_LEN, STRIDE, TRAIN_RATIO
+except ImportError:  # direct script execution: python fl_code/data_utils.py
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT))
+    from fl_code.config import INPUT_STEPS, PRED_LEN, STRIDE, TRAIN_RATIO
+
 
 def load_client_data(client_id: str) -> tuple[pd.DataFrame, dict]:
     """Load a client's raw data.
@@ -127,7 +134,7 @@ def _seq_length_stats(df: pd.DataFrame, seqs: list[str]) -> dict:
 
 def preprocess(df: pd.DataFrame, seqs: list[str],
                local_cols: list[str] | None = None,
-               train_ratio: float = 0.8) -> tuple[pd.DataFrame, dict]:
+               train_ratio: float = TRAIN_RATIO) -> tuple[pd.DataFrame, dict]:
     """Normalise load sequences and local features.
 
     Load (power) columns — per-sequence, per-column:
@@ -243,11 +250,11 @@ def make_sliding_windows(
     df: pd.DataFrame,
     seqs: list[str],
     public_cols: list[str],
-    input_steps: int = 144,
-    pred_len: int = 6,
-    stride: int = 1,
+    input_steps: int = INPUT_STEPS,
+    pred_len: int = PRED_LEN,
+    stride: int = STRIDE,
     train: bool = True,
-    train_ratio: float = 0.8,
+    train_ratio: float = TRAIN_RATIO,
     local_cols: list[str] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, list[dict]]:
     """Generate {X, y} samples via sliding window over each sequence.
@@ -401,9 +408,9 @@ class LazySlidingWindowDataset:
     """
 
     def __init__(self, df: pd.DataFrame, seqs: list[str],
-                 public_cols: list[str], input_steps: int = 144,
-                 pred_len: int = 6, stride: int = 48,
-                 train: bool = True, train_ratio: float = 0.8):
+                 public_cols: list[str], input_steps: int = INPUT_STEPS,
+                 pred_len: int = PRED_LEN, stride: int = STRIDE,
+                 train: bool = True, train_ratio: float = TRAIN_RATIO):
         self.pub_arr = df[public_cols].values.astype(np.float32)
         # Store all load columns as a single 2D array for fast slicing
         self.load_arr = df[seqs].values.astype(np.float32)  # (T, num_seqs)
@@ -470,7 +477,7 @@ class LazySlidingWindowDataset:
 # ============================================================================
 
 def split_train_test(df: pd.DataFrame, seqs: list[str],
-                     train_ratio: float = 0.8) -> tuple[pd.DataFrame, pd.DataFrame]:
+                     train_ratio: float = TRAIN_RATIO) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Per-sequence chronological 80/20 split.
 
     Each sequence is split independently at ``train_ratio`` of its own valid

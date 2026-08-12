@@ -36,6 +36,9 @@ from fl_code.models import (
     build_tcn, build_corrector,
 )
 from fl_code.models.rc import quantile_loss
+from fl_code.config import (
+    STRIDE, CORRECTOR_EPOCHS, CORRECTOR_LR, CORRECTOR_BATCH_SIZE,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_CONFIG_PATH = ROOT / "fl_code" / "models" / "client_config.yaml"
@@ -414,14 +417,15 @@ if __name__ == "__main__":
     parser.add_argument("--global-model", type=str,
                         default=str(ROOT / "fl_code" / "baseline_outputs" / "best_global_tcn.pt"),
                         help="Path to frozen Global TCN checkpoint")
-    parser.add_argument("--epochs", type=int, default=30,
-                        help="Corrector training epochs per client (default: 30)")
-    parser.add_argument("--lr", type=float, default=1e-3,
-                        help="Learning rate (default: 1e-3)")
-    parser.add_argument("--batch-size", type=int, default=256,
-                        help="Batch size for Corrector training (default: 256)")
-    parser.add_argument("--stride", type=int, default=48,
-                        help="Sliding-window stride (default: 48)")
+    parser.add_argument("--epochs", type=int, default=CORRECTOR_EPOCHS,
+                        help=f"Corrector training epochs per client (default: {CORRECTOR_EPOCHS})")
+    parser.add_argument("--lr", type=float, default=CORRECTOR_LR,
+                        help=f"Learning rate (default: {CORRECTOR_LR})")
+    parser.add_argument("--batch-size", type=int, default=CORRECTOR_BATCH_SIZE,
+                        help=f"Batch size for Corrector training (default: {CORRECTOR_BATCH_SIZE})")
+    parser.add_argument("--stride", type=int, default=STRIDE,
+                        help=f"Sliding-window stride (default: {STRIDE}, "
+                             f"= pred_len for continuous coverage)")
     parser.add_argument("--eval-seqs", type=int, default=None,
                         help="Cap eval to first N sequences per client")
     parser.add_argument("--max-seqs", type=int, default=None,

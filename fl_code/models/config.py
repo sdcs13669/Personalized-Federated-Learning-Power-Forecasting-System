@@ -42,7 +42,7 @@ class CorrectorConfig:
     - ``"tcn"``  — :class:`TCNRC`:  causal TCN (rf=31 >= 6)
     """
 
-    rc_type: Literal["mlp", "lstm", "tcn"] = "tcn"
+    rc_type: Literal["mlp", "lstm", "tcn"] = "mlp"   # default: MLP (DP-compatible)
 
     pred_len: int = PRED_LEN         # from fl_code/config.py
     local_feat_dim: int = 0          # varies per dataset

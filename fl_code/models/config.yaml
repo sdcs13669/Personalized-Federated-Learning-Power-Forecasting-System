@@ -32,7 +32,7 @@ global_model:
 # 阶段二: Residual Corrector — 本地个性修正（永不上传）
 # ============================================================
 corrector:
-  rc_type: "tcn"              # "tcn" | "mlp"
+  rc_type: "mlp"              # "mlp" 默认（DP 唯一兼容架构，Phase 3/4 对照同架构）| "lstm" | "tcn"
 
   # --- shared settings ---
   pred_len: 6

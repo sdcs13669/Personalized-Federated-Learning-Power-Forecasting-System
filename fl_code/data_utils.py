@@ -419,7 +419,9 @@ class LazySlidingWindowDataset:
         self.pred_len = pred_len
         self.total = input_steps + pred_len
 
-        self.windows: list[tuple[int, int]] = []  # (seq_idx, start_pos)
+        # (seq_idx, start_pos) — numpy 存储，比 list[tuple] 省 ~85% 内存
+        # （429 万个窗口：tuple 列表 ~480MB → int32 数组 ~69MB）
+        window_list: list[tuple[int, int]] = []
         n_skipped = 0
 
         for si, s in enumerate(seqs):
@@ -448,7 +450,9 @@ class LazySlidingWindowDataset:
                 if np.isnan(self.pub_arr[i:in_end]).any():
                     n_skipped += 1
                     continue
-                self.windows.append((si, i))
+                window_list.append((si, i))
+
+        self.windows = np.asarray(window_list, dtype=np.int32).reshape(-1, 2)
 
         if n_skipped:
             import sys

@@ -26,6 +26,7 @@ import torch
 import yaml
 import flwr as fl
 from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
+from flwr.server.strategy import DifferentialPrivacyServerSideFixedClipping
 from torch.utils.data import DataLoader
 
 from fl_code.data_utils import (
@@ -43,6 +44,13 @@ from fl_code.config import (
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_CONFIG_PATH = ROOT / "fl_code" / "models" / "client_config.yaml"
 OUTPUT_DIR = ROOT / "fl_code" / "baseline_outputs"
+
+# Per-actor data cache.  ``client_fn`` runs inside each Ray actor process;
+# this module-level dict lets an actor load its own client's data exactly
+# once and reuse it across rounds.  The dict is serialized (empty) with the
+# ``client_fn`` closure instead of the ~500 MB full ``cache`` — this is the
+# main memory optimisation (see analysis: 13 GB → ~2 GB peak).
+_ACTOR_DATA_CACHE: dict[str, dict] = {}
 
 
 # ============================================================================
@@ -65,16 +73,43 @@ def _ndarrays_to_state(ndarrays: list[np.ndarray],
 # ============================================================================
 
 class _SaveParamsFedAvg(fl.server.strategy.FedAvg):
-    """FedAvg that saves the final aggregated parameters for post-training eval."""
+    """FedAvg that saves the aggregated parameters for post-training eval.
+
+    Records both the final aggregated parameters and a per-round history of
+    them (for round checkpoints).
+    """
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.aggregated_parameters = None
+        self.round_parameters: list = []
 
     def aggregate_fit(self, server_round, results, failures):
         agg = super().aggregate_fit(server_round, results, failures)
         if agg is not None:
             self.aggregated_parameters = agg[0]
+            self.round_parameters.append(agg[0])
+        return agg
+
+
+class _SaveParamsDPFedAvg(DifferentialPrivacyServerSideFixedClipping):
+    """DP-FedAvg (server-side clipping) that also saves the **noised**
+    aggregated parameters.
+
+    Important: the saved parameters must be the post-noise ones — saving the
+    inner strategy's (un-noised) aggregate would void the (ε, δ) guarantee.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.aggregated_parameters = None
+        self.round_parameters: list = []
+
+    def aggregate_fit(self, server_round, results, failures):
+        agg = super().aggregate_fit(server_round, results, failures)
+        if agg is not None:
+            self.aggregated_parameters = agg[0]
+            self.round_parameters.append(agg[0])
         return agg
 
 
@@ -151,6 +186,27 @@ def _load_client_cache(client_id: str, stride: int,
         "train_ds": train_ds,
         "n_train": len(train_ds),
     }
+
+
+def _aggregate_fit_metrics(metrics) -> dict:
+    """Average per-client train_loss across the round (for the history log)."""
+    losses = [m["train_loss"] for _, m in metrics]
+    return {"train_loss": float(np.mean(losses)) if losses else float("nan")}
+
+
+def _compute_epsilon(noise_multiplier: float, rounds: int,
+                     sample_rate: float, delta: float) -> float:
+    """(ε, δ)-DP budget for DP-FedAvg via RDP composition (Opacus accountant).
+
+    ``sample_rate = num_sampled_clients / num_clients`` — with
+    ``fraction_fit=1.0`` every client is sampled each round, so it is 1.0.
+    """
+    from opacus.accountants import RDPAccountant
+    accountant = RDPAccountant()
+    for _ in range(rounds):
+        accountant.step(noise_multiplier=noise_multiplier,
+                        sample_rate=sample_rate)
+    return float(accountant.get_epsilon(delta))
 
 
 def _list_clients(whitelist: list[str] | None = None) -> list[str]:
@@ -239,22 +295,62 @@ def main(args: argparse.Namespace):
     print(f"Model params: {n_params:,}")
     init_ndarrays = _state_to_ndarrays(tmp_model.state_dict())
 
+    # Actors load their own data via client_fn — release driver-side
+    # training datasets (window lists) to free ~500 MB before simulation.
+    for cdata in cache.values():
+        cdata.pop("train_ds", None)
+
     def client_fn(context) -> fl.client.Client:
-        """Flower client factory — called once per client at simulation start."""
+        """Flower client factory — runs inside each Ray actor.
+
+        Loads the client's data **inside the actor** (cached per actor),
+        so the closure stays tiny and the ~500 MB ``cache`` is never
+        serialized to actors.
+        """
         partition_id = int(context.node_config["partition-id"])
         cid = client_ids[partition_id]
-        cdata = cache[cid]
-        return PowerClient(cid, cdata["train_ds"], cdata["n_train"], args).to_client()
+        cdata = _ACTOR_DATA_CACHE.get(cid)
+        if cdata is None:
+            cdata = _load_client_cache(cid, args.stride, args.max_seqs)
+            _ACTOR_DATA_CACHE[cid] = cdata
+        return PowerClient(cid, cdata["train_ds"], cdata["n_train"],
+                           args).to_client()
 
     # --- Strategy (custom FedAvg that saves final aggregated parameters) ---
     init_params = ndarrays_to_parameters(init_ndarrays)
-    strategy = _SaveParamsFedAvg(
+    base_strategy = _SaveParamsFedAvg(
         fraction_fit=1.0,               # all clients train each round
         fraction_evaluate=0.0,          # skip built-in eval (we eval post-training)
         min_fit_clients=len(client_ids),
         min_available_clients=len(client_ids),
         initial_parameters=init_params,
+        fit_metrics_aggregation_fn=_aggregate_fit_metrics,  # log avg train_loss per round
     )
+
+    # DP-FedAvg (central DP, server-side fixed clipping) when --dp-noise given.
+    # Works on the flattened parameter-vector updates, so it is agnostic to
+    # the model architecture (TCN included) — unlike local DP-SGD (Opacus).
+    dp_info = None
+    if args.dp_noise is not None and args.dp_noise > 0:
+        strategy = _SaveParamsDPFedAvg(
+            strategy=base_strategy,
+            noise_multiplier=args.dp_noise,
+            clipping_norm=args.dp_clip,
+            num_sampled_clients=len(client_ids),
+        )
+        sample_rate = len(client_ids) / len(client_ids)   # fraction_fit=1.0
+        eps = _compute_epsilon(args.dp_noise, args.rounds,
+                               sample_rate, args.dp_delta)
+        dp_info = {
+            "noise_multiplier": args.dp_noise,
+            "clipping_norm": args.dp_clip,
+            "delta": args.dp_delta,
+            "epsilon": round(eps, 4),
+        }
+        print(f"DP-FedAvg enabled: σ={args.dp_noise}, C={args.dp_clip}, "
+              f"(ε={eps:.2f}, δ={args.dp_delta}) after {args.rounds} rounds")
+    else:
+        strategy = base_strategy
 
     # --- Run simulation ---
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -281,6 +377,15 @@ def main(args: argparse.Namespace):
     final_state = _ndarrays_to_state(final_ndarrays, state_keys)
     tmp_model.load_state_dict(final_state)
 
+    # --- Save per-round checkpoints (every aggregated model) ---
+    ckpt_dir = OUTPUT_DIR / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    for i, params_obj in enumerate(strategy.round_parameters, start=1):
+        ndarrays = parameters_to_ndarrays(params_obj)   # Parameters → ndarray
+        state = _ndarrays_to_state(ndarrays, state_keys)
+        torch.save(state, ckpt_dir / f"round_{i:03d}.pt")
+    print(f"Saved {len(strategy.round_parameters)} round checkpoints to {ckpt_dir}")
+
     # --- Post-training evaluation ---
     print("\nEvaluating final model on all clients ...")
     eval_device = device
@@ -302,6 +407,9 @@ def main(args: argparse.Namespace):
             "model_params": n_params,
             "training_time_s": round(elapsed, 1),
             "final_metrics": results,
+            "train_losses": [round(loss, 6) for _, loss in
+                             fl_history.metrics_distributed_fit.get("train_loss", [])],
+            "dp": dp_info,   # None unless --dp-noise was given
             # Flower's built-in history (fit loss per round, etc.)
             "flower_history": {
                 "losses_centralized": fl_history.losses_centralized,
@@ -347,6 +455,15 @@ if __name__ == "__main__":
                         help="Cap training sequences per client (default: all)")
     parser.add_argument("--clients", nargs="*", default=None,
                         help="Client ids to include (default: all)")
+
+    # DP-FedAvg (central DP, server-side fixed clipping)
+    parser.add_argument("--dp-noise", type=float, default=None,
+                        help="Enable DP-FedAvg: Gaussian noise multiplier σ "
+                             "(default: None = no DP)")
+    parser.add_argument("--dp-clip", type=float, default=1.0,
+                        help="Per-update clipping norm C (default: 1.0)")
+    parser.add_argument("--dp-delta", type=float, default=1e-5,
+                        help="DP delta for the (ε, δ) budget (default: 1e-5)")
     args = parser.parse_args()
 
     main(args)

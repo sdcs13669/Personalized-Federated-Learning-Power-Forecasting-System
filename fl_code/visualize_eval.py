@@ -5,11 +5,10 @@ Workflow:
   2. pick one or more load sequences
   3. pick a model — all available checkpoints are auto-discovered:
        - Global TCN only (Phase 2)
-       - Global + Corrector (Phase 3, non-DP)
-       - Global + DP Corrector σ=... (Phase 4, one option per noise level)
+       - Global + Corrector (Phase 3)
   4. rolling forecast; predictions are **de-normalised** back to physical
      units and plotted against the actuals for the first 7 days of the test
-     split
+     split (with Corrector: P10/P50/P90 curves + 80% CI band)
 
 Usage::
 
@@ -44,7 +43,6 @@ ROOT = Path(__file__).resolve().parents[1]
 CLIENT_CONFIG_PATH = ROOT / "fl_code" / "models" / "client_config.yaml"
 BASELINE_DIR = ROOT / "fl_code" / "baseline_outputs"
 PERSONALIZED_DIR = ROOT / "fl_code" / "personalized_outputs"
-DP_DIR = ROOT / "fl_code" / "dp_outputs"
 GLOBAL_MODEL_PATH = BASELINE_DIR / "best_global_tcn.pt"
 
 
@@ -81,14 +79,16 @@ def _rolling_forecast(model, corrector, df_norm, seq, public_cols, local_cols,
     Every *STRIDE* steps the model re-predicts the next *PRED_LEN* steps
     (window slides by 6 steps → fully covered, stitch-free curve).
 
-    Returns de-normalised predictions (raw physical units), NaN where no
+    Returns de-normalised predictions of shape ``(n_steps, 3)`` — columns
+    are [P10, P50, P90] (raw physical units).  Without a Corrector the
+    three columns are identical (Global TCN point forecast).  NaN where no
     prediction is available (e.g. invalid data).
     """
     pub_arr = df_norm[public_cols].values.astype(np.float32)
     loc_arr = df_norm[local_cols].values.astype(np.float32) if local_cols else None
     load = df_norm[seq].values.astype(np.float32)
 
-    preds_norm = np.full(n_steps, np.nan, dtype=np.float32)
+    preds_norm = np.full((n_steps, 3), np.nan, dtype=np.float32)
     prev_residual = np.zeros(PRED_LEN, dtype=np.float32)
     local_dim = len(local_cols)
 
@@ -113,22 +113,25 @@ def _rolling_forecast(model, corrector, df_norm, seq, public_cols, local_cols,
                 x_loc_t = None
             yp_t = torch.from_numpy(y_pre).unsqueeze(0).to(device)
             e = corrector(yp_t, res_t, x_loc_t).squeeze(0).cpu().numpy()  # (PRED_LEN, 3)
-            y_final = y_pre + e[:, 1]                         # P50
+            y_q = y_pre[:, np.newaxis] + e                     # (PRED_LEN, 3) = P10/P50/P90
         else:
-            y_final = y_pre
+            y_q = np.stack([y_pre, y_pre, y_pre], axis=1)      # point forecast
 
         out_idx = pos + INPUT_STEPS - start
         take = min(PRED_LEN, n_steps - out_idx)
         if take <= 0:
             break
-        preds_norm[out_idx:out_idx + take] = y_final[:take]
+        preds_norm[out_idx:out_idx + take] = y_q[:take]
 
         actual = load[pos + INPUT_STEPS:pos + INPUT_STEPS + PRED_LEN]
         prev_residual = actual - y_pre
         pos += STRIDE
 
     # De-normalise (load sequences always use log1p + z-score)
-    return np.expm1(preds_norm * p["std"] + p["mean"])
+    preds = np.expm1(preds_norm * p["std"] + p["mean"])
+    # Pinball loss does not enforce quantile monotonicity — sort each row
+    # so P10 <= P50 <= P90 and the CI band stays well-defined.
+    return np.sort(preds, axis=1)
 
 
 # ---------------------------------------------------------------------------
@@ -203,23 +206,14 @@ class EvalVisualizer:
         """Auto-discover available models for a client.
 
         Returns ``[(display_label, corrector_path_or_None)]`` — the first
-        entry is always the Global TCN alone.  Scans Phase 2 (baseline),
-        Phase 3 (personalized) and Phase 4 (DP) output directories.
+        entry is always the Global TCN alone.  Scans Phase 2 (baseline) and
+        Phase 3 (personalized) output directories.
         """
         options = [("Global TCN (Phase 2)", None)]
 
         p3 = PERSONALIZED_DIR / f"corrector_{cid}.pt"
         if p3.exists():
-            options.append((f"Global + Corrector (Phase 3)", p3))
-
-        if DP_DIR.exists():
-            nodp = DP_DIR / f"corrector_{cid}_nodp.pt"
-            if nodp.exists():
-                options.append(("Global + Non-DP Corrector (Phase 4)", nodp))
-            for p in sorted(DP_DIR.glob(f"corrector_{cid}_dp_sigma*.pt")):
-                sigma = p.stem.rsplit("sigma", 1)[1].replace("_", ".")
-                options.append(
-                    (f"Global + DP Corrector σ={sigma} (Phase 4)", p))
+            options.append(("Global + Corrector (Phase 3)", p3))
 
         return options
 
@@ -341,15 +335,29 @@ class EvalVisualizer:
                 self.global_model, corrector, self.current["df_norm"], seq,
                 self.current["public_cols"], self.current["local_cols"],
                 split, DISPLAY_STEPS, self.current["params"][seq], self.device,
-            )
+            )  # (DISPLAY_STEPS, 3) = [P10, P50, P90]
             actuals = df[seq].values[split:split + DISPLAY_STEPS].astype(float)
             t = np.arange(DISPLAY_STEPS) * 0.5 / 24
 
             ax.plot(t, actuals, label="Actual", lw=1.2, color="#1f77b4")
-            ax.plot(t, preds, label="Predicted", lw=1.2,
-                    color="#ff7f0e", alpha=0.85)
+            if corrector is not None:
+                # Quantile forecast: P10 / P50 / P90 + 80% CI band
+                ax.fill_between(t, preds[:, 0], preds[:, 2],
+                                color="#ff7f0e", alpha=0.25,
+                                label="P10–P90 (80% CI)")
+                ax.plot(t, preds[:, 0], label="P10", lw=1.0,
+                        color="#ff7f0e", alpha=0.55)
+                ax.plot(t, preds[:, 2], label="P90", lw=1.0,
+                        color="#ff7f0e", alpha=0.55)
+                ax.plot(t, preds[:, 1], label="P50 (center)", lw=1.4,
+                        color="#d62728")
+                p50 = preds[:, 1]
+            else:
+                ax.plot(t, preds[:, 1], label="Predicted", lw=1.2,
+                        color="#ff7f0e", alpha=0.85)
+                p50 = preds[:, 1]
 
-            m = _metrics(actuals, preds)
+            m = _metrics(actuals, p50)
             metrics_txt = (f"MAE={m['mae']:.2f}  RMSE={m['rmse']:.2f}  "
                            f"MSE={m['mse']:.1f}  R²={m['r2']:.4f}" if m
                            else "no valid data")

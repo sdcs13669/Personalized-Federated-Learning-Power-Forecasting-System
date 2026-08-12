@@ -12,6 +12,31 @@ import torch.nn as nn
 from .tcn import TemporalConvNet
 
 
+def _monotone_quantiles(raw: torch.Tensor) -> torch.Tensor:
+    """Monotone quantile parameterisation of the residual corrections.
+
+    ``raw`` holds 3 free values per step; the first is unbounded (corrections
+    may be positive or negative) and the next two are non-negative increments
+    (softplus), so the output strictly satisfies::
+
+        e_lo <= e_mid <= e_hi   =>   Y_pre + e  is quantile-monotone
+
+    Replaces the plain head output whose quantiles were not guaranteed
+    monotone under pinball training.
+
+    Parameters
+    ----------
+    raw : Tensor, shape ``(..., 3)``
+
+    Returns
+    -------
+    Tensor of shape ``(..., 3)`` = [e_lo, e_mid, e_hi].
+    """
+    d = torch.nn.functional.softplus(raw[..., 1:])            # >= 0
+    e_lo = raw[..., :1]
+    return torch.cat([e_lo, e_lo + torch.cumsum(d, dim=-1)], dim=-1)
+
+
 # ============================================================================
 # MLP-based residual corrector
 # ============================================================================
@@ -84,7 +109,8 @@ class MLPRC(nn.Module):
             parts.append(x_local_dynamic)           # (B, pred_len, D_local)
 
         x = torch.cat(parts, dim=-1)                # (B, pred_len, in_dim)
-        return self.mlp(x)                           # (B, pred_len, num_quantiles)
+        raw = self.mlp(x)                            # (B, pred_len, num_quantiles)
+        return _monotone_quantiles(raw)              # e_lo <= e_mid <= e_hi
 
 
 # ============================================================================
@@ -163,7 +189,8 @@ class LSTMRC(nn.Module):
 
         x = torch.cat(parts, dim=-1)                # (B, pred_len, in_dim)
         out, _ = self.lstm(x)                       # (B, pred_len, hidden_size)
-        return self.head(out)                        # (B, pred_len, num_quantiles)
+        raw = self.head(out)                         # (B, pred_len, num_quantiles)
+        return _monotone_quantiles(raw)              # e_lo <= e_mid <= e_hi
 
 
 # ============================================================================
@@ -238,7 +265,8 @@ class TCNRC(nn.Module):
 
         x = torch.cat(parts, dim=1)                       # (B, in_ch, pred_len)
         out = self.corrector(x)                            # (B, num_quantiles, pred_len)
-        return out.transpose(1, 2)                         # (B, pred_len, num_quantiles)
+        raw = out.transpose(1, 2)                          # (B, pred_len, num_quantiles)
+        return _monotone_quantiles(raw)                    # e_lo <= e_mid <= e_hi
 
 
 # ============================================================================

@@ -332,7 +332,8 @@ def main(args: argparse.Namespace):
             continue
 
         # ---- Build Corrector ----
-        corr_cfg = CorrectorConfig(local_feat_dim=local_dim)
+        corr_cfg = CorrectorConfig(rc_type=args.rc_type,
+                                   local_feat_dim=local_dim)
         corrector = build_corrector(corr_cfg).to(device)
         print(f"  Corrector: {corr_cfg.rc_type}, {corr_cfg.local_feat_dim} local dims, "
               f"{sum(p.numel() for p in corrector.parameters()):,} params")
@@ -344,14 +345,27 @@ def main(args: argparse.Namespace):
         optimizer = torch.optim.Adam(corrector.parameters(), lr=args.lr)
 
         t0 = time.perf_counter()
+        epoch_losses: list[float] = []
+        best_loss = float("inf")
+        best_epoch = 0
+        best_state = None
         for epoch in range(args.epochs):
             loss = _train_corrector_epoch(corrector, loader, optimizer, device)
+            epoch_losses.append(round(loss, 6))
+            # keep only the best model (lowest pinball loss)
+            if loss < best_loss:
+                best_loss = loss
+                best_epoch = epoch + 1
+                best_state = {k: v.detach().cpu().clone()
+                              for k, v in corrector.state_dict().items()}
             if (epoch + 1) % max(1, args.epochs // 5) == 0:
                 print(f"  Epoch {epoch + 1:3d}/{args.epochs}  loss={loss:.6f}")
-        print(f"  Training: {time.perf_counter() - t0:.1f}s")
+        print(f"  Training: {time.perf_counter() - t0:.1f}s  "
+              f"(best epoch {best_epoch}, loss={best_loss:.6f})")
 
-        # ---- Evaluate ----
-        print(f"  Evaluating rolling forecast ...")
+        # ---- Evaluate (on the best-epoch model) ----
+        corrector.load_state_dict(best_state)
+        print(f"  Evaluating rolling forecast (best epoch {best_epoch}) ...")
         t0 = time.perf_counter()
         eval_seqs = data["seqs"]
         if args.eval_seqs and len(eval_seqs) > args.eval_seqs:
@@ -369,9 +383,8 @@ def main(args: argparse.Namespace):
             gain = (mae_base - mae_corr) / mae_base * 100
             print(f"  Improvement: {gain:+.1f}%")
 
-        # ---- Save Corrector ----
-        torch.save(corrector.state_dict(),
-                   OUTPUT_DIR / f"corrector_{cid}.pt")
+        # ---- Save Corrector (best epoch only) ----
+        torch.save(best_state, OUTPUT_DIR / f"corrector_{cid}.pt")
 
         all_results[cid] = {
             "mae_baseline": mae_base,
@@ -381,6 +394,9 @@ def main(args: argparse.Namespace):
             "n_seqs": n_seqs,
             "local_dim": local_dim,
             "corrector_type": corr_cfg.rc_type,
+            "epoch_losses": epoch_losses,
+            "best_epoch": best_epoch,
+            "best_loss": round(best_loss, 6),
         }
 
     # --- Summary ---
@@ -432,6 +448,10 @@ if __name__ == "__main__":
                         help="Cap training sequences per client")
     parser.add_argument("--clients", nargs="*", default=None,
                         help="Client ids to include (default: all)")
+    parser.add_argument("--rc-type", type=str, default="mlp",
+                        choices=["mlp", "lstm", "tcn"],
+                        help="Residual Corrector architecture (default: mlp — "
+                             "same as Phase 4 DP baseline for fair comparison)")
     args = parser.parse_args()
 
     main(args)

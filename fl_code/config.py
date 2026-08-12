@@ -31,18 +31,11 @@ BASELINE_LR = 1e-3
 BASELINE_BATCH_SIZE = 64
 
 # ---------------------------------------------------------------------------
-# Phase 3/4 — per-client Corrector training
+# Phase 3 — per-client Corrector training
 # ---------------------------------------------------------------------------
 CORRECTOR_EPOCHS = 30
 CORRECTOR_LR = 1e-3
 CORRECTOR_BATCH_SIZE = 256
-
-# ---------------------------------------------------------------------------
-# Phase 4 — DP-SGD defaults (Opacus)
-# ---------------------------------------------------------------------------
-DP_NOISE_MULTIPLIERS = (0.5, 1.0, 2.0, 5.0)
-DP_MAX_GRAD_NORM = 1.0
-DP_DELTA = 1e-5
 
 # ---------------------------------------------------------------------------
 # Visualisation

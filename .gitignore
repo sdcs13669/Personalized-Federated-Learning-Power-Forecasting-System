@@ -12,3 +12,6 @@ __pycache__/
 .claude
 CLAUDE.md
 fl_code/outputs/
+
+#pt模型
+*.pt

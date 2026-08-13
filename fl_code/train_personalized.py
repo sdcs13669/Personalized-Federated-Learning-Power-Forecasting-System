@@ -7,7 +7,7 @@ corrections ``E_corr``, producing ``Y_final = Y_pre + E_corr``.
 Usage::
 
     python -m fl_code.train_personalized
-    python -m fl_code.train_personalized --global-model outputs/best_global_tcn.pt
+    python -m fl_code.train_personalized --global-model fl_code/baseline_outputs/checkpoints/round_020.pt
     python -m fl_code.train_personalized --clients steel_ind_0 tetouan_city_0
     python -m fl_code.train_personalized --max-seqs 5 --epochs 20
 """
@@ -282,15 +282,24 @@ def _list_clients(whitelist: list[str] | None = None) -> list[str]:
 # Main
 # ---------------------------------------------------------------------------
 
+def _latest_global_checkpoint() -> Path | None:
+    """Newest Phase 2 round checkpoint (baseline_outputs/checkpoints)."""
+    files = sorted((ROOT / "fl_code" / "baseline_outputs" / "checkpoints").glob("round_*.pt"))
+    return files[-1] if files else None
+
+
 def main(args: argparse.Namespace):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
 
     # --- Load frozen Global TCN ---
-    global_path = Path(args.global_model)
-    if not global_path.exists():
-        raise FileNotFoundError(f"Global model not found: {global_path}.  "
-                                f"Run Phase 2 first (train_baseline.py).")
+    global_path = (Path(args.global_model) if args.global_model
+                   else _latest_global_checkpoint())
+    if global_path is None or not global_path.exists():
+        raise FileNotFoundError(
+            f"Global model not found: {global_path}.  Run Phase 2 first "
+            f"(train_baseline.py) — it saves per-round checkpoints to "
+            f"fl_code/baseline_outputs/checkpoints/.")
     print(f"Loading Global TCN: {global_path}")
     global_tcn = build_tcn(TCNConfig()).to(device)
     global_tcn.load_state_dict(torch.load(global_path, map_location=device,
@@ -430,9 +439,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Phase 3: Personalised FL — Global TCN + Residual Corrector",
     )
-    parser.add_argument("--global-model", type=str,
-                        default=str(ROOT / "fl_code" / "baseline_outputs" / "best_global_tcn.pt"),
-                        help="Path to frozen Global TCN checkpoint")
+    parser.add_argument("--global-model", type=str, default=None,
+                        help="Path to frozen Global TCN checkpoint (default: newest "
+                             "fl_code/baseline_outputs/checkpoints/round_*.pt)")
     parser.add_argument("--epochs", type=int, default=CORRECTOR_EPOCHS,
                         help=f"Corrector training epochs per client (default: {CORRECTOR_EPOCHS})")
     parser.add_argument("--lr", type=float, default=CORRECTOR_LR,
@@ -451,7 +460,7 @@ if __name__ == "__main__":
     parser.add_argument("--rc-type", type=str, default="mlp",
                         choices=["mlp", "lstm", "tcn"],
                         help="Residual Corrector architecture (default: mlp — "
-                             "same as Phase 4 DP baseline for fair comparison)")
+                             "simplest, fastest; switch to tcn/lstm if needed)")
     args = parser.parse_args()
 
     main(args)

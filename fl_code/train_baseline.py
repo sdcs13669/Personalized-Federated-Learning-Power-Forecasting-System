@@ -68,6 +68,17 @@ def _ndarrays_to_state(ndarrays: list[np.ndarray],
     return OrderedDict((k, torch.from_numpy(v)) for k, v in zip(keys, ndarrays))
 
 
+def _extract_train_losses(results) -> dict[str, float]:
+    """Per-client train_loss from a round's FitRes list ({cid: loss})."""
+    losses: dict[str, float] = {}
+    for proxy, fit_res in results:
+        loss = fit_res.metrics.get("train_loss")
+        if loss is not None:
+            cid = fit_res.metrics.get("client_id", proxy.cid)
+            losses[cid] = float(loss)
+    return losses
+
+
 # ============================================================================
 # Flower Client
 # ============================================================================
@@ -75,20 +86,22 @@ def _ndarrays_to_state(ndarrays: list[np.ndarray],
 class _SaveParamsFedAvg(fl.server.strategy.FedAvg):
     """FedAvg that saves the aggregated parameters for post-training eval.
 
-    Records both the final aggregated parameters and a per-round history of
-    them (for round checkpoints).
+    Records the aggregated parameters, a per-round history of them (for
+    round checkpoints), and per-client train losses.
     """
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.aggregated_parameters = None
         self.round_parameters: list = []
+        self.per_client_train_losses: dict[int, dict[str, float]] = {}
 
     def aggregate_fit(self, server_round, results, failures):
         agg = super().aggregate_fit(server_round, results, failures)
         if agg is not None:
             self.aggregated_parameters = agg[0]
             self.round_parameters.append(agg[0])
+        self.per_client_train_losses[server_round] = _extract_train_losses(results)
         return agg
 
 
@@ -104,12 +117,14 @@ class _SaveParamsDPFedAvg(DifferentialPrivacyServerSideFixedClipping):
         super().__init__(**kwargs)
         self.aggregated_parameters = None
         self.round_parameters: list = []
+        self.per_client_train_losses: dict[int, dict[str, float]] = {}
 
     def aggregate_fit(self, server_round, results, failures):
         agg = super().aggregate_fit(server_round, results, failures)
         if agg is not None:
             self.aggregated_parameters = agg[0]
             self.round_parameters.append(agg[0])
+        self.per_client_train_losses[server_round] = _extract_train_losses(results)
         return agg
 
 
@@ -149,7 +164,7 @@ class PowerClient(fl.client.NumPyClient):
             loss = train_epoch(model, loader, optimizer, self._device)
 
         ndarrays = _state_to_ndarrays(model.state_dict())
-        return ndarrays, self.n_train, {"train_loss": loss}
+        return ndarrays, self.n_train, {"train_loss": loss, "client_id": self.cid}
 
     def evaluate(self, parameters, config):
         # Evaluation is done post-training via evaluate(); skip in-simulation.
@@ -396,9 +411,7 @@ def main(args: argparse.Namespace):
 
     print(f"\nFinal — WAPE={results['wape']:.4f}  MAE={results['avg_mae']:.4f}")
 
-    # --- Save outputs ---
-    torch.save(tmp_model.state_dict(), OUTPUT_DIR / "best_global_tcn.pt")
-
+    # --- Save outputs (final model = last round checkpoint) ---
     with open(OUTPUT_DIR / "baseline_history.json", "w") as f:
         json.dump({
             "args": {k: str(v) for k, v in vars(args).items()},
@@ -409,6 +422,9 @@ def main(args: argparse.Namespace):
             "final_metrics": results,
             "train_losses": [round(loss, 6) for _, loss in
                              fl_history.metrics_distributed_fit.get("train_loss", [])],
+            "train_losses_per_client": strategy.per_client_train_losses,
+            "final_model": (f"checkpoints/round_{len(strategy.round_parameters):03d}.pt"
+                            if strategy.round_parameters else None),
             "dp": dp_info,   # None unless --dp-noise was given
             # Flower's built-in history (fit loss per round, etc.)
             "flower_history": {

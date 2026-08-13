@@ -1,0 +1,51 @@
+{
+  "args": {
+    "rounds": "2",
+    "local_epochs": "1",
+    "lr": "0.001",
+    "batch_size": "64",
+    "stride": "6",
+    "eval_seqs": "2",
+    "max_seqs": "5",
+    "clients": "['steel_ind_0']",
+    "dp_noise": "None",
+    "dp_clip": "1.0",
+    "dp_delta": "1e-05"
+  },
+  "num_clients": 1,
+  "total_train_windows": 2312,
+  "model_params": 28806,
+  "training_time_s": 11.1,
+  "final_metrics": {
+    "wape": 0.38523614406585693,
+    "avg_mae": 0.3494550287723541,
+    "client_metrics": {
+      "steel_ind_0": {
+        "mae": 0.3494550287723541,
+        "rmse": 0.4987471103668213,
+        "r2": 0.7263401746749878,
+        "n_train": 2312
+      }
+    }
+  },
+  "train_losses": [
+    0.829175,
+    0.499488
+  ],
+  "train_losses_per_client": {
+    "1": {
+      "steel_ind_0": 0.8291750775801169
+    },
+    "2": {
+      "steel_ind_0": 0.49948769405081467
+    }
+  },
+  "final_model": "checkpoints/round_002.pt",
+  "dp": null,
+  "flower_history": {
+    "losses_centralized": [],
+    "losses_distributed": [],
+    "metrics_centralized": {},
+    "metrics_distributed": {}
+  }
+}

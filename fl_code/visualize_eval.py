@@ -43,7 +43,12 @@ ROOT = Path(__file__).resolve().parents[1]
 CLIENT_CONFIG_PATH = ROOT / "fl_code" / "models" / "client_config.yaml"
 BASELINE_DIR = ROOT / "fl_code" / "baseline_outputs"
 PERSONALIZED_DIR = ROOT / "fl_code" / "personalized_outputs"
-GLOBAL_MODEL_PATH = BASELINE_DIR / "best_global_tcn.pt"
+
+
+def _latest_global_checkpoint() -> Path | None:
+    """Newest Phase 2 round checkpoint (baseline_outputs/checkpoints)."""
+    files = sorted((BASELINE_DIR / "checkpoints").glob("round_*.pt"))
+    return files[-1] if files else None
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +233,7 @@ class EvalVisualizer:
         return "mlp"
 
     def _load_corrector(self, path: Path, local_dim: int):
-        """Load a Corrector checkpoint (Phase 3 or 4) with rc_type auto-detect.
+        """Load a Corrector checkpoint (Phase 3) with rc_type auto-detect.
 
         Also strips an eventual ``_module.`` prefix from Opacus
         GradSampleModule state_dicts.
@@ -271,7 +276,7 @@ class EvalVisualizer:
 
             self._ensure_global_model()
 
-            # auto-detect Phase 2/3/4 models
+            # auto-detect Phase 2/3 models
             self.model_map = dict(self._detect_models(cid))
             labels = list(self.model_map.keys())
             self.model_cb["values"] = labels
@@ -288,12 +293,13 @@ class EvalVisualizer:
     def _ensure_global_model(self):
         if self.global_model is not None:
             return
-        if not GLOBAL_MODEL_PATH.exists():
+        path = _latest_global_checkpoint()
+        if path is None:
             raise FileNotFoundError(
-                f"Global TCN not found: {GLOBAL_MODEL_PATH}\n"
+                f"No Global TCN checkpoint found in {BASELINE_DIR / 'checkpoints'}\n"
                 f"Run Phase 2 first: python -m fl_code.train_baseline")
         model = build_tcn(TCNConfig()).to(self.device)
-        model.load_state_dict(torch.load(GLOBAL_MODEL_PATH, map_location=self.device,
+        model.load_state_dict(torch.load(path, map_location=self.device,
                                          weights_only=True))
         model.eval()
         self.global_model = model

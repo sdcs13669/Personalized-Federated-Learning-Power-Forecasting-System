@@ -37,7 +37,8 @@ from fl_code.models import (
 )
 from fl_code.models.rc import quantile_loss
 from fl_code.config import (
-    STRIDE, CORRECTOR_EPOCHS, CORRECTOR_LR, CORRECTOR_BATCH_SIZE,
+    INPUT_STEPS, PRED_LEN, STRIDE, TRAIN_RATIO,
+    CORRECTOR_EPOCHS, CORRECTOR_LR, CORRECTOR_BATCH_SIZE,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -312,8 +313,60 @@ def main(args: argparse.Namespace):
     client_ids = _list_clients(args.clients)
     print(f"Clients ({len(client_ids)}): {', '.join(client_ids)}")
 
-    # --- Per-client training ---
+    # --- Save run config (model architecture + hyperparameters) ---
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    corr_cfg = CorrectorConfig(rc_type=args.rc_type)
+    corr_dict = {
+        "rc_type": args.rc_type,
+        "pred_len": corr_cfg.pred_len,
+        "quantiles": list(corr_cfg.quantiles),
+        "dropout": corr_cfg.dropout,
+    }
+    if args.rc_type == "mlp":
+        corr_dict["hidden_dims"] = list(corr_cfg.hidden_dims)
+    elif args.rc_type == "lstm":
+        corr_dict["hidden_size"] = corr_cfg.lstm_hidden_size
+        corr_dict["num_layers"] = corr_cfg.lstm_num_layers
+    else:
+        corr_dict["num_channels"] = list(corr_cfg.num_channels)
+        corr_dict["kernel_size"] = corr_cfg.kernel_size
+
+    config_json = {
+        "script": "fl_code.train_personalized",
+        "phase": "Phase 3 — Global TCN + per-client Residual Corrector",
+        "global_model": {
+            "path": str(global_path),
+            "name": "GlobalTCN (frozen)",
+            **TCNConfig().to_dict(),
+        },
+        "corrector": {
+            **corr_dict,
+            "input": "Y_pre + residual_history + x_local_dynamic",
+            "loss": "pinball (quantile loss)",
+            "monotone_quantiles": "softplus increments → e10<=e50<=e90 guaranteed",
+            "model_selection": "best epoch by lowest training pinball loss",
+        },
+        "window_geometry": {
+            "input_steps": INPUT_STEPS,
+            "pred_len": PRED_LEN,
+            "stride": args.stride,
+            "train_ratio": TRAIN_RATIO,
+        },
+        "training": {
+            "epochs": args.epochs,
+            "lr": args.lr,
+            "batch_size": args.batch_size,
+            "num_clients": len(client_ids),
+            "clients": client_ids,
+            "max_seqs": args.max_seqs,
+            "eval_seqs": args.eval_seqs,
+        },
+    }
+    with open(OUTPUT_DIR / "config.json", "w") as f:
+        json.dump(config_json, f, indent=2, default=str)
+    print(f"Saved run config to {OUTPUT_DIR / 'config.json'}")
+
+    # --- Per-client training ---
     all_results: dict[str, dict] = {}
 
     for cid in client_ids:
@@ -427,6 +480,13 @@ def main(args: argparse.Namespace):
             "args": {k: str(v) for k, v in vars(args).items()},
             "results": all_results,
         }, f, indent=2, default=str)
+
+    # --- Update config with per-client local feature dims ---
+    config_json["corrector"]["local_feat_dim_per_client"] = {
+        cid: r["local_dim"] for cid, r in all_results.items()
+    }
+    with open(OUTPUT_DIR / "config.json", "w") as f:
+        json.dump(config_json, f, indent=2, default=str)
 
     print(f"\nOutputs saved to {OUTPUT_DIR}")
 

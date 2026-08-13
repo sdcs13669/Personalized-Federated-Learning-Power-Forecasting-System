@@ -1,0 +1,32 @@
+{
+  "global_model": "C:\\Users\\qq283\\Desktop\\Personalized-Federated-Learning-Power-Forecasting-System\\fl_code\\baseline_outputs\\checkpoints\\round_002.pt",
+  "args": {
+    "global_model": "None",
+    "epochs": "3",
+    "lr": "0.001",
+    "batch_size": "256",
+    "stride": "6",
+    "eval_seqs": "2",
+    "max_seqs": "None",
+    "clients": "['steel_ind_0']",
+    "rc_type": "mlp"
+  },
+  "results": {
+    "steel_ind_0": {
+      "mae_baseline": 0.33741894364356995,
+      "mae_personalized": 0.3252647817134857,
+      "improvement_pct": 3.6,
+      "n_windows": 2312,
+      "n_seqs": 1,
+      "local_dim": 4,
+      "corrector_type": "mlp",
+      "epoch_losses": [
+        0.210613,
+        0.151892,
+        0.118289
+      ],
+      "best_epoch": 3,
+      "best_loss": 0.118289
+    }
+  }
+}

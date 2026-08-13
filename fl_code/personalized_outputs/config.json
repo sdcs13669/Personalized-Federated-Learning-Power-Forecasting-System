@@ -1,0 +1,60 @@
+{
+  "script": "fl_code.train_personalized",
+  "phase": "Phase 3 \u2014 Global TCN + per-client Residual Corrector",
+  "global_model": {
+    "path": "C:\\Users\\qq283\\Desktop\\Personalized-Federated-Learning-Power-Forecasting-System\\fl_code\\baseline_outputs\\checkpoints\\round_002.pt",
+    "name": "GlobalTCN (frozen)",
+    "in_channels": 11,
+    "input_steps": 144,
+    "pred_len": 6,
+    "num_channels": [
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32
+    ],
+    "kernel_size": 2,
+    "dropout": 0.2
+  },
+  "corrector": {
+    "rc_type": "mlp",
+    "pred_len": 6,
+    "quantiles": [
+      0.1,
+      0.5,
+      0.9
+    ],
+    "dropout": 0.1,
+    "hidden_dims": [
+      64,
+      32
+    ],
+    "input": "Y_pre + residual_history + x_local_dynamic",
+    "loss": "pinball (quantile loss)",
+    "monotone_quantiles": "softplus increments \u2192 e10<=e50<=e90 guaranteed",
+    "model_selection": "best epoch by lowest training pinball loss",
+    "local_feat_dim_per_client": {
+      "steel_ind_0": 4
+    }
+  },
+  "window_geometry": {
+    "input_steps": 144,
+    "pred_len": 6,
+    "stride": 6,
+    "train_ratio": 0.8
+  },
+  "training": {
+    "epochs": 3,
+    "lr": 0.001,
+    "batch_size": 256,
+    "num_clients": 1,
+    "clients": [
+      "steel_ind_0"
+    ],
+    "max_seqs": null,
+    "eval_seqs": 2
+  }
+}

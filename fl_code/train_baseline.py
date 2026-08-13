@@ -37,7 +37,8 @@ from fl_code.data_utils import (
 from fl_code.train_eval_utils import train_epoch, evaluate
 from fl_code.models import TCNConfig, build_tcn
 from fl_code.config import (
-    STRIDE, BASELINE_ROUNDS, BASELINE_LOCAL_EPOCHS,
+    INPUT_STEPS, PRED_LEN, STRIDE, TRAIN_RATIO,
+    BASELINE_ROUNDS, BASELINE_LOCAL_EPOCHS,
     BASELINE_LR, BASELINE_BATCH_SIZE,
 )
 
@@ -367,8 +368,44 @@ def main(args: argparse.Namespace):
     else:
         strategy = base_strategy
 
-    # --- Run simulation ---
+    # --- Save run config (model architecture + hyperparameters) ---
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    tcn_cfg = TCNConfig().to_dict()
+    rf = 1 + 2 * (tcn_cfg["kernel_size"] - 1) * (2 ** len(tcn_cfg["num_channels"]) - 1)
+    config_json = {
+        "script": "fl_code.train_baseline",
+        "phase": "Phase 2 — FedAvg GlobalTCN (Flower simulation)",
+        "model": {
+            "name": "GlobalTCN",
+            **tcn_cfg,
+            "receptive_field": rf,
+            "n_params": n_params,
+        },
+        "window_geometry": {
+            "input_steps": INPUT_STEPS,
+            "pred_len": PRED_LEN,
+            "stride": args.stride,
+            "train_ratio": TRAIN_RATIO,
+        },
+        "training": {
+            "rounds": args.rounds,
+            "local_epochs": args.local_epochs,
+            "lr": args.lr,
+            "batch_size": args.batch_size,
+            "num_clients": len(client_ids),
+            "clients": client_ids,
+            "max_seqs": args.max_seqs,
+            "eval_seqs": args.eval_seqs,
+            "loss": "MAE (L1) on normalised load",
+            "checkpoints": "one per round (checkpoints/round_NNN.pt); final = last round",
+        },
+        "dp": dp_info,
+    }
+    with open(OUTPUT_DIR / "config.json", "w") as f:
+        json.dump(config_json, f, indent=2, default=str)
+    print(f"Saved run config to {OUTPUT_DIR / 'config.json'}")
+
+    # --- Run simulation ---
     print(f"\nStarting Flower simulation: {args.rounds} rounds × {len(client_ids)} clients")
 
     t0 = time.perf_counter()

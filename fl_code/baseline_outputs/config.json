@@ -1,0 +1,44 @@
+{
+  "script": "fl_code.train_baseline",
+  "phase": "Phase 2 \u2014 FedAvg GlobalTCN (Flower simulation)",
+  "model": {
+    "name": "GlobalTCN",
+    "in_channels": 11,
+    "input_steps": 144,
+    "pred_len": 6,
+    "num_channels": [
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32
+    ],
+    "kernel_size": 2,
+    "dropout": 0.2,
+    "receptive_field": 255,
+    "n_params": 28806
+  },
+  "window_geometry": {
+    "input_steps": 144,
+    "pred_len": 6,
+    "stride": 6,
+    "train_ratio": 0.8
+  },
+  "training": {
+    "rounds": 2,
+    "local_epochs": 1,
+    "lr": 0.001,
+    "batch_size": 64,
+    "num_clients": 1,
+    "clients": [
+      "steel_ind_0"
+    ],
+    "max_seqs": 5,
+    "eval_seqs": 2,
+    "loss": "MAE (L1) on normalised load",
+    "checkpoints": "one per round (checkpoints/round_NNN.pt); final = last round"
+  },
+  "dp": null
+}

@@ -1,0 +1,52 @@
+# ============================================================
+# 一键环境文件（路线1）— Linux (Ubuntu) + NVIDIA GPU
+# 用法：
+#     conda env create -f environment.yml
+#     conda activate fl
+#
+# 说明：
+#   - 所有版本与本机 Windows fl 环境一致（torch 2.8.0 / flwr 1.30.0 等）
+#   - torch 为 CUDA 12.8 版（pytorch + nvidia 渠道），要求 NVIDIA 驱动 >= 570
+#     * 服务器驱动较旧时：把下方 pytorch-cuda 改为 12.6 / 12.4 / 12.1
+#   - 无 GPU 时：删除 pytorch-cuda 一行即可（pytorch 渠道自动装 CPU 版）
+#   - 国内服务器可加速（先执行，再运行 conda env create）：
+#       conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/pytorch/
+#       conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/nvidia/
+#       conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/
+# ============================================================
+
+name: fl
+
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+
+dependencies:
+  # --- 基础 ---
+  - python=3.10
+  - pip
+  - tk                        # tkinter（visualize_eval.py 图形界面）
+
+  # --- PyTorch 生态（CUDA 12.8，与本机一致） ---
+  - pytorch=2.8.0
+  - torchvision=0.23.0
+  - torchaudio=2.8.0
+  - pytorch-cuda=12.8
+
+  # --- 科学计算栈（conda-forge 预编译） ---
+  - numpy=2.2
+  - pandas=2.3
+  - matplotlib=3.10
+  - scipy=1.15
+  - scikit-learn=1.7
+  - statsmodels=0.14
+  - pyyaml=6.0
+
+  # --- pip 独占包 ---
+  - pip:
+      - flwr[simulation]==1.30.0   # 联邦学习（含 ray 仿真后端）
+      - ray==2.57.0
+      - opacus==1.6.0              # 差分隐私（ε 计算 / DP-SGD）
+      - xgboost==2.1.4             # 特征选择
+      - shap==0.49.1               # SHAP 特征重要度

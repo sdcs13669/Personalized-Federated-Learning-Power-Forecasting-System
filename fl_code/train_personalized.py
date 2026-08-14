@@ -170,12 +170,24 @@ def _train_corrector_epoch(corrector, loader, optimizer, device):
 # Rolling-forecast evaluation with Corrector
 # ---------------------------------------------------------------------------
 
+def _metrics(preds: np.ndarray, actuals: np.ndarray) -> dict:
+    """MAE / RMSE / R² in normalised space (same as train_eval_utils.evaluate)."""
+    mae = float(np.mean(np.abs(preds - actuals)))
+    mse = float(np.mean((preds - actuals) ** 2))
+    rmse = float(np.sqrt(mse))
+    ss_res = float(np.sum((actuals - preds) ** 2))
+    ss_tot = float(np.sum((actuals - actuals.mean()) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+    return {"mae": mae, "rmse": rmse, "r2": r2}
+
+
 @torch.no_grad()
 def _evaluate_personalized(global_model, corrector, df_norm, seqs,
                            public_cols, local_cols, stride, device):
     """Rolling-forecast eval: Global TCN + Corrector → Y_final.
 
-    Returns (baseline_mae, personal_mae) for the Global TCN P50 vs Corrector P50.
+    Returns two metric dicts (mae/rmse/r2) for the Global TCN P50 vs
+    Corrector P50, computed in normalised space (before de-normalisation).
     """
     pub_arr = df_norm[public_cols].values.astype(np.float32)
     loc_arr = df_norm[local_cols].values.astype(np.float32) if local_cols else None
@@ -229,7 +241,8 @@ def _evaluate_personalized(global_model, corrector, df_norm, seqs,
             pos += stride
 
     if not all_actuals:
-        return float("nan"), float("nan")
+        nan_m = {"mae": float("nan"), "rmse": float("nan"), "r2": float("nan")}
+        return nan_m, nan_m
 
     actuals = np.concatenate(all_actuals)
     valid = ~np.isnan(actuals)
@@ -238,10 +251,7 @@ def _evaluate_personalized(global_model, corrector, df_norm, seqs,
     corr_preds = np.concatenate(all_preds_corr)[valid]  # (T, 3)
     actuals = actuals[valid]
 
-    mae_base = float(np.mean(np.abs(base_preds - actuals)))
-    mae_corr = float(np.mean(np.abs(corr_preds[:, 1] - actuals)))  # P50 = index 1
-
-    return mae_base, mae_corr
+    return _metrics(base_preds, actuals), _metrics(corr_preds[:, 1], actuals)
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +318,7 @@ def main(args: argparse.Namespace):
     global_tcn.eval()
     for p in global_tcn.parameters():
         p.requires_grad = False
+    n_global_params = sum(p.numel() for p in global_tcn.parameters())
 
     # --- Clients ---
     client_ids = _list_clients(args.clients)
@@ -361,6 +372,7 @@ def main(args: argparse.Namespace):
             "max_seqs": args.max_seqs,
             "eval_seqs": args.eval_seqs,
         },
+        "dp": None,   # Phase 3 is pure local training — no DP needed
     }
     with open(OUTPUT_DIR / "config.json", "w") as f:
         json.dump(config_json, f, indent=2, default=str)
@@ -368,6 +380,7 @@ def main(args: argparse.Namespace):
 
     # --- Per-client training ---
     all_results: dict[str, dict] = {}
+    t_total0 = time.perf_counter()
 
     for cid in client_ids:
         print(f"\n{'='*60}")
@@ -397,8 +410,9 @@ def main(args: argparse.Namespace):
         corr_cfg = CorrectorConfig(rc_type=args.rc_type,
                                    local_feat_dim=local_dim)
         corrector = build_corrector(corr_cfg).to(device)
+        n_corr_params = sum(p.numel() for p in corrector.parameters())
         print(f"  Corrector: {corr_cfg.rc_type}, {corr_cfg.local_feat_dim} local dims, "
-              f"{sum(p.numel() for p in corrector.parameters()):,} params")
+              f"{n_corr_params:,} params")
 
         # ---- Train Corrector ----
         train_ds = CorrectorDataset(y_pre, y_true, x_local)
@@ -422,7 +436,8 @@ def main(args: argparse.Namespace):
                               for k, v in corrector.state_dict().items()}
             if (epoch + 1) % max(1, args.epochs // 5) == 0:
                 print(f"  Epoch {epoch + 1:3d}/{args.epochs}  loss={loss:.6f}")
-        print(f"  Training: {time.perf_counter() - t0:.1f}s  "
+        train_time = time.perf_counter() - t0
+        print(f"  Training: {train_time:.1f}s  "
               f"(best epoch {best_epoch}, loss={best_loss:.6f})")
 
         # ---- Evaluate (on the best-epoch model) ----
@@ -433,14 +448,19 @@ def main(args: argparse.Namespace):
         if args.eval_seqs and len(eval_seqs) > args.eval_seqs:
             eval_seqs = eval_seqs[:args.eval_seqs]
 
-        mae_base, mae_corr = _evaluate_personalized(
+        m_base, m_pers = _evaluate_personalized(
             global_tcn, corrector, data["df_norm"],
             eval_seqs, data["public_cols"], data["local_cols"],
             args.stride, device,
         )
-        print(f"  Eval: {time.perf_counter() - t0:.1f}s")
-        print(f"  Baseline MAE (Y_pre):  {mae_base:.4f}")
-        print(f"  Personal MAE (Y_final): {mae_corr:.4f}")
+        eval_time = time.perf_counter() - t0
+        mae_base, mae_corr = m_base["mae"], m_pers["mae"]
+        print(f"  Eval: {eval_time:.1f}s")
+        print(f"  Baseline MAE (Y_pre):   {mae_base:.4f}  "
+              f"RMSE={m_base['rmse']:.4f}  R^2={m_base['r2']:.4f}")
+        print(f"  Personal MAE (Y_final): {mae_corr:.4f}  "
+              f"RMSE={m_pers['rmse']:.4f}  R^2={m_pers['r2']:.4f}")
+        gain = None
         if not np.isnan(mae_base) and not np.isnan(mae_corr):
             gain = (mae_base - mae_corr) / mae_base * 100
             print(f"  Improvement: {gain:+.1f}%")
@@ -449,17 +469,51 @@ def main(args: argparse.Namespace):
         torch.save(best_state, OUTPUT_DIR / f"corrector_{cid}.pt")
 
         all_results[cid] = {
-            "mae_baseline": mae_base,
-            "mae_personalized": mae_corr,
-            "improvement_pct": round(gain, 2) if not np.isnan(mae_base) else None,
+            "mae_baseline": m_base["mae"],
+            "rmse_baseline": m_base["rmse"],
+            "r2_baseline": m_base["r2"],
+            "mae_personalized": m_pers["mae"],
+            "rmse_personalized": m_pers["rmse"],
+            "r2_personalized": m_pers["r2"],
+            "improvement_mae_pct": round(gain, 2) if gain is not None else None,
             "n_windows": n_windows,
             "n_seqs": n_seqs,
             "local_dim": local_dim,
             "corrector_type": corr_cfg.rc_type,
+            "corrector_params": n_corr_params,
+            "train_time_s": round(train_time, 1),
+            "eval_time_s": round(eval_time, 1),
             "epoch_losses": epoch_losses,
             "best_epoch": best_epoch,
             "best_loss": round(best_loss, 6),
         }
+
+    # --- Aggregate metrics (aligned with baseline_history.json) ---
+    total_train_time = time.perf_counter() - t_total0
+    client_metrics = {}
+    valid_base = [r["mae_baseline"] for r in all_results.values()
+                  if not np.isnan(r["mae_baseline"])]
+    valid_pers = [r["mae_personalized"] for r in all_results.values()
+                  if not np.isnan(r["mae_personalized"])]
+    gains = [r["improvement_mae_pct"] for r in all_results.values()
+             if r["improvement_mae_pct"] is not None]
+    avg_base = float(np.mean(valid_base)) if valid_base else float("nan")
+    avg_pers = float(np.mean(valid_pers)) if valid_pers else float("nan")
+    avg_gain = float(np.mean(gains)) if gains else float("nan")
+    for cid, r in all_results.items():
+        client_metrics[cid] = {
+            "mae": r["mae_personalized"],
+            "rmse": r["rmse_personalized"],
+            "r2": r["r2_personalized"],
+            "n_train": r["n_windows"],
+        }
+    final_metrics = {
+        "avg_mae_baseline": avg_base,
+        "avg_mae_personalized": avg_pers,
+        "avg_improvement_mae_pct": (round(avg_gain, 2)
+                                    if not np.isnan(avg_gain) else None),
+        "client_metrics": client_metrics,
+    }
 
     # --- Summary ---
     print(f"\n{'='*60}")
@@ -472,12 +526,20 @@ def main(args: argparse.Namespace):
         corr = r["mae_personalized"]
         delta = f"{(base - corr) / base * 100:+.1f}%" if base == base else "N/A"
         print(f"  {cid:20s}  {base:10.4f}  {corr:10.4f}  {delta:>8s}")
+    print("-" * 52)
+    print(f"  {'Average':20s}  {avg_base:10.4f}  {avg_pers:10.4f}  "
+          f"{avg_gain:+8.2f}%")
 
     # --- Save results ---
     with open(OUTPUT_DIR / "personalized_results.json", "w") as f:
         json.dump({
-            "global_model": str(global_path),
             "args": {k: str(v) for k, v in vars(args).items()},
+            "global_model": str(global_path),
+            "num_clients": len(client_ids),
+            "global_model_params": n_global_params,
+            "training_time_s": round(total_train_time, 1),
+            "final_metrics": final_metrics,
+            "dp": None,   # Phase 3 is pure local training — no DP needed
             "results": all_results,
         }, f, indent=2, default=str)
 

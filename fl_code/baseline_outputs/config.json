@@ -27,16 +27,24 @@
     "train_ratio": 0.8
   },
   "training": {
-    "rounds": 2,
+    "rounds": 50,
     "local_epochs": 1,
     "lr": 0.001,
     "batch_size": 64,
-    "num_clients": 1,
+    "num_clients": 9,
     "clients": [
-      "steel_ind_0"
+      "steel_ind_0",
+      "tetouan_city_0",
+      "tetouan_city_1",
+      "tetouan_city_2",
+      "lcl_res_0",
+      "lcl_res_1",
+      "eld_ind_0",
+      "eld_ind_1",
+      "eld_ind_2"
     ],
-    "max_seqs": 5,
-    "eval_seqs": 2,
+    "max_seqs": null,
+    "eval_seqs": null,
     "loss": "MAE (L1) on normalised load",
     "checkpoints": "one per round (checkpoints/round_NNN.pt); final = last round"
   },

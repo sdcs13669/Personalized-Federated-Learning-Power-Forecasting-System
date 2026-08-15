@@ -10,6 +10,7 @@ Usage::
     python -m fl_code.train_personalized --global-model fl_code/baseline_outputs/nodp/checkpoints/round_020.pt
     python -m fl_code.train_personalized --clients steel_ind_0 tetouan_city_0
     python -m fl_code.train_personalized --max-seqs 5 --epochs 20
+    python -m fl_code.train_personalized --output-dir my_run      # custom output root
 """
 
 from __future__ import annotations
@@ -43,7 +44,6 @@ from fl_code.config import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_CONFIG_PATH = ROOT / "fl_code" / "models" / "client_config.yaml"
-OUTPUT_DIR = ROOT / "fl_code" / "personalized_outputs"
 
 # ---------------------------------------------------------------------------
 # Lazy dataset variant with local features
@@ -331,7 +331,8 @@ def main(args: argparse.Namespace):
     print(f"Clients ({len(client_ids)}): {', '.join(client_ids)}")
 
     # --- Save run config (model architecture + hyperparameters) ---
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    variant_dir = Path(args.output_dir)
+    variant_dir.mkdir(parents=True, exist_ok=True)
     corr_cfg = CorrectorConfig(rc_type=args.rc_type)
     corr_dict = {
         "rc_type": args.rc_type,
@@ -380,9 +381,9 @@ def main(args: argparse.Namespace):
         },
         "dp": None,   # Phase 3 is pure local training — no DP needed
     }
-    with open(OUTPUT_DIR / "config.json", "w") as f:
+    with open(variant_dir / "config.json", "w") as f:
         json.dump(config_json, f, indent=2, default=str)
-    print(f"Saved run config to {OUTPUT_DIR / 'config.json'}")
+    print(f"Saved run config to {variant_dir / 'config.json'}")
 
     # --- Per-client training ---
     all_results: dict[str, dict] = {}
@@ -472,7 +473,7 @@ def main(args: argparse.Namespace):
             print(f"  Improvement: {gain:+.1f}%")
 
         # ---- Save Corrector (best epoch only) ----
-        torch.save(best_state, OUTPUT_DIR / f"corrector_{cid}.pt")
+        torch.save(best_state, variant_dir / f"corrector_{cid}.pt")
 
         all_results[cid] = {
             "mae_baseline": m_base["mae"],
@@ -537,7 +538,7 @@ def main(args: argparse.Namespace):
           f"{avg_gain:+8.2f}%")
 
     # --- Save results ---
-    with open(OUTPUT_DIR / "personalized_results.json", "w") as f:
+    with open(variant_dir / "personalized_results.json", "w") as f:
         json.dump({
             "args": {k: str(v) for k, v in vars(args).items()},
             "global_model": str(global_path),
@@ -553,10 +554,10 @@ def main(args: argparse.Namespace):
     config_json["corrector"]["local_feat_dim_per_client"] = {
         cid: r["local_dim"] for cid, r in all_results.items()
     }
-    with open(OUTPUT_DIR / "config.json", "w") as f:
+    with open(variant_dir / "config.json", "w") as f:
         json.dump(config_json, f, indent=2, default=str)
 
-    print(f"\nOutputs saved to {OUTPUT_DIR}")
+    print(f"\nOutputs saved to {variant_dir}")
 
 
 # ---------------------------------------------------------------------------
@@ -586,6 +587,9 @@ if __name__ == "__main__":
                         help="Cap training sequences per client")
     parser.add_argument("--clients", nargs="*", default=None,
                         help="Client ids to include (default: all)")
+    parser.add_argument("--output-dir", type=str,
+                        default=str(ROOT / "fl_code" / "personalized_outputs"),
+                        help="Output root directory (default: fl_code/personalized_outputs)")
     parser.add_argument("--rc-type", type=str, default="mlp",
                         choices=["mlp", "lstm", "tcn"],
                         help="Residual Corrector architecture (default: mlp — "

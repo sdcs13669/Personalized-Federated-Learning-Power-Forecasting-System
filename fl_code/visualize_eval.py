@@ -219,7 +219,8 @@ class EvalVisualizer:
         """
         options: list[tuple[str, Path, Path | None]] = []
         for sub, tag in (("nodp", "no DP"), ("dp", "DP")):
-            ckpts = sorted((root / sub / "checkpoints").glob("round_*.pt"))
+            ckpts = sorted((root / sub / "checkpoints").glob("round_*.pt"),
+                           key=lambda p: int(p.stem.split("_")[-1]))
             if not ckpts:
                 continue
             ckpt = ckpts[-1]
@@ -304,7 +305,7 @@ class EvalVisualizer:
 
             self._scan_models()
 
-            n_corr = sum(1 for v in self.model_map.values() if v[1] is not None)
+            n_corr = len({v[1] for v in self.model_map.values() if v[1] is not None})
             self.status_var.set(
                 f"{cid}: {len(seqs)} sequences, {n_corr} Corrector(s) "
                 f"found | {info.get('valid_days', '?')} valid days")

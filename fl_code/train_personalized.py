@@ -299,7 +299,8 @@ def _latest_global_checkpoint() -> Path | None:
     DP global models are never auto-loaded — pass them explicitly via
     --global-model (e.g. fl_code/baseline_outputs/dp/checkpoints/round_020.pt).
     """
-    files = sorted((ROOT / "fl_code" / "baseline_outputs" / "nodp" / "checkpoints").glob("round_*.pt"))
+    files = sorted((ROOT / "fl_code" / "baseline_outputs" / "nodp" / "checkpoints").glob("round_*.pt"),
+                   key=lambda p: int(p.stem.split("_")[-1]))
     return files[-1] if files else None
 
 

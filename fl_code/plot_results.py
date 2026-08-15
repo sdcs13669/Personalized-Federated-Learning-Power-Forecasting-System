@@ -1,7 +1,7 @@
 """Plot training / validation results from Phase 2 & 3 output JSONs.
 
 Reads:
-  - ``fl_code/baseline_outputs/baseline_history.json``     (Phase 2 FedAvg)
+  - ``fl_code/baseline_outputs/nodp/baseline_history.json`` (Phase 2 FedAvg; falls back to dp/, root overridable via --root)
   - ``fl_code/personalized_outputs/personalized_results.json`` (Phase 3)
 
 Produces one figure per phase (``fl_code/figures/``), each with the
@@ -19,6 +19,7 @@ Usage::
 
     python -m fl_code.plot_results          # save PNGs
     python -m fl_code.plot_results --show   # also open figure windows
+    python -m fl_code.plot_results --root my_run            # custom baseline output root
 """
 
 from __future__ import annotations

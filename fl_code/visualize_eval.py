@@ -3,8 +3,10 @@
 Workflow:
   1. pick a client (from ``client_config.yaml``)
   2. pick one or more load sequences
-  3. pick a model — all available checkpoints are auto-discovered:
-       - Global TCN only (Phase 2)
+  3. pick a model — Phase 2 checkpoints are auto-discovered under the
+     baseline root (default fl_code/baseline_outputs), scanning both the
+     non-DP (nodp/) and DP (dp/) sub-directories:
+       - Global TCN only (Phase 2, no DP / DP)
        - Global + Corrector (Phase 3)
   4. rolling forecast; predictions are **de-normalised** back to physical
      units and plotted against the actuals for the first 7 days of the test
@@ -43,12 +45,6 @@ ROOT = Path(__file__).resolve().parents[1]
 CLIENT_CONFIG_PATH = ROOT / "fl_code" / "models" / "client_config.yaml"
 BASELINE_DIR = ROOT / "fl_code" / "baseline_outputs"
 PERSONALIZED_DIR = ROOT / "fl_code" / "personalized_outputs"
-
-
-def _latest_global_checkpoint() -> Path | None:
-    """Newest Phase 2 round checkpoint (baseline_outputs/checkpoints)."""
-    files = sorted((BASELINE_DIR / "checkpoints").glob("round_*.pt"))
-    return files[-1] if files else None
 
 
 # ---------------------------------------------------------------------------
@@ -149,9 +145,9 @@ class EvalVisualizer:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.global_model = None
+        self.global_cache: dict[Path, torch.nn.Module] = {}
         self.current: dict | None = None
-        self.model_map: dict[str, Path | None] = {}
+        self.model_map: dict[str, tuple[Path, Path | None]] = {}
 
         root.title("Rolling-Forecast Visualiser — Global TCN ± Corrector")
         root.geometry("1180x820")
@@ -177,6 +173,13 @@ class EvalVisualizer:
         )
         self.client_cb.pack(side="left", padx=6)
         self.client_cb.bind("<<ComboboxSelected>>", self._on_client_selected)
+
+        ttk.Label(top, text="Baseline root:").pack(side="left", padx=(12, 0))
+        self.root_var = tk.StringVar(value=str(BASELINE_DIR))
+        root_entry = ttk.Entry(top, textvariable=self.root_var, width=30)
+        root_entry.pack(side="left", padx=6)
+        root_entry.bind("<Return>", self._on_root_changed)
+        root_entry.bind("<FocusOut>", self._on_root_changed)
 
         self.status_var = tk.StringVar(value="Select a client")
         ttk.Label(top, textvariable=self.status_var,
@@ -206,21 +209,46 @@ class EvalVisualizer:
 
     # ---- model detection ----
 
-    @staticmethod
-    def _detect_models(cid: str) -> list[tuple[str, Path | None]]:
-        """Auto-discover available models for a client.
+    def _detect_models(self, cid: str, root: Path
+                       ) -> list[tuple[str, Path, Path | None]]:
+        """Auto-discover global models under ``root`` (nodp/ and dp/).
 
-        Returns ``[(display_label, corrector_path_or_None)]`` — the first
-        entry is always the Global TCN alone.  Scans Phase 2 (baseline) and
-        Phase 3 (personalized) output directories.
+        Returns ``[(label, global_ckpt, corrector_path_or_None)]``.  A
+        ``+ Corrector (Phase 3)`` entry is added per variant when
+        ``personalized_outputs/corrector_{cid}.pt`` exists.
         """
-        options = [("Global TCN (Phase 2)", None)]
-
-        p3 = PERSONALIZED_DIR / f"corrector_{cid}.pt"
-        if p3.exists():
-            options.append(("Global + Corrector (Phase 3)", p3))
-
+        options: list[tuple[str, Path, Path | None]] = []
+        for sub, tag in (("nodp", "no DP"), ("dp", "DP")):
+            ckpts = sorted((root / sub / "checkpoints").glob("round_*.pt"))
+            if not ckpts:
+                continue
+            ckpt = ckpts[-1]
+            options.append((f"Global TCN (Phase 2, {tag})", ckpt, None))
+            corr = PERSONALIZED_DIR / f"corrector_{cid}.pt"
+            if corr.exists():
+                options.append(
+                    (f"Global TCN (Phase 2, {tag}) + Corrector (Phase 3)",
+                     ckpt, corr))
         return options
+
+    def _scan_models(self) -> list[str]:
+        """Re-discover model options for the current client + root dir."""
+        root = Path(self.root_var.get().strip() or str(BASELINE_DIR))
+        self.model_map = {
+            label: (ckpt, corr) for label, ckpt, corr
+            in self._detect_models(self.client_var.get(), root)}
+        labels = list(self.model_map.keys())
+        self.model_cb["values"] = labels
+        self.model_var.set(labels[0] if labels else "")
+        return labels
+
+    def _on_root_changed(self, _event=None):
+        if self.current is None:
+            return
+        labels = self._scan_models()
+        self.status_var.set(
+            f"{len(labels)} model option(s) in this root"
+            if labels else "No Phase 2 checkpoints in this root")
 
     @staticmethod
     def _infer_rc_type(state_dict: dict) -> str:
@@ -274,35 +302,26 @@ class EvalVisualizer:
             for s in seqs:
                 self.seq_list.insert("end", s)
 
-            self._ensure_global_model()
+            self._scan_models()
 
-            # auto-detect Phase 2/3 models
-            self.model_map = dict(self._detect_models(cid))
-            labels = list(self.model_map.keys())
-            self.model_cb["values"] = labels
-            self.model_var.set(labels[0])
-
-            n_models = len(labels) - 1
+            n_corr = sum(1 for v in self.model_map.values() if v[1] is not None)
             self.status_var.set(
-                f"{cid}: {len(seqs)} sequences, {n_models} Corrector(s) "
+                f"{cid}: {len(seqs)} sequences, {n_corr} Corrector(s) "
                 f"found | {info.get('valid_days', '?')} valid days")
         except Exception as exc:
             messagebox.showerror("Load error", str(exc))
             self.status_var.set("Load failed")
 
-    def _ensure_global_model(self):
-        if self.global_model is not None:
-            return
-        path = _latest_global_checkpoint()
-        if path is None:
-            raise FileNotFoundError(
-                f"No Global TCN checkpoint found in {BASELINE_DIR / 'checkpoints'}\n"
-                f"Run Phase 2 first: python -m fl_code.train_baseline")
+    def _get_global_model(self, path: Path) -> torch.nn.Module:
+        """Load (and cache) a Global TCN checkpoint by path."""
+        if path in self.global_cache:
+            return self.global_cache[path]
         model = build_tcn(TCNConfig()).to(self.device)
         model.load_state_dict(torch.load(path, map_location=self.device,
                                          weights_only=True))
         model.eval()
-        self.global_model = model
+        self.global_cache[path] = model
+        return model
 
     # ---- plotting ----
 
@@ -317,9 +336,17 @@ class EvalVisualizer:
             return
 
         label = self.model_var.get()
-        path = self.model_map.get(label) if label else None
-        corrector = (self._load_corrector(path, len(self.current["local_cols"]))
-                     if path else None)
+        entry = self.model_map.get(label) if label else None
+        if entry is None:
+            messagebox.showwarning(
+                "No model",
+                "No Phase 2 checkpoint found. Run train_baseline.py first, "
+                "or check the baseline root path.")
+            return
+        ckpt_path, corr_path = entry
+        global_model = self._get_global_model(ckpt_path)
+        corrector = (self._load_corrector(corr_path, len(self.current["local_cols"]))
+                     if corr_path else None)
 
         self.status_var.set(f"Forecasting {len(sel)} sequence(s) ...")
         self.root.update_idletasks()
@@ -338,7 +365,7 @@ class EvalVisualizer:
             start_dt = str(df["datetime"].iloc[split])[:19]
 
             preds = _rolling_forecast(
-                self.global_model, corrector, self.current["df_norm"], seq,
+                global_model, corrector, self.current["df_norm"], seq,
                 self.current["public_cols"], self.current["local_cols"],
                 split, DISPLAY_STEPS, self.current["params"][seq], self.device,
             )  # (DISPLAY_STEPS, 3) = [P10, P50, P90]

@@ -20,6 +20,7 @@ Usage::
     python -m fl_code.plot_results          # save PNGs
     python -m fl_code.plot_results --show   # also open figure windows
     python -m fl_code.plot_results --root my_run            # custom baseline output root
+    python -m fl_code.plot_results --fig-dir my_figs        # custom figure output dir
 """
 
 from __future__ import annotations
@@ -198,7 +199,8 @@ def _fig_phase3(personalized: dict, L: dict, plt):
 # Main
 # ---------------------------------------------------------------------------
 
-def main(show: bool = False, root: Path | None = None):
+def main(show: bool = False, root: Path | None = None,
+         fig_dir: Path | None = None):
     import matplotlib
     matplotlib.use("TkAgg" if show else "Agg")
     import matplotlib.pyplot as plt
@@ -221,18 +223,19 @@ def main(show: bool = False, root: Path | None = None):
             f"  {root / 'dp' / 'baseline_history.json'}\n  {PERSONALIZED_JSON}\n"
             f"Run train_baseline.py / train_personalized.py first.")
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = fig_dir or OUT_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
     saved = []
 
     if baseline is not None:
         fig = _fig_phase2(baseline, L, plt)
-        p = OUT_DIR / "fig_phase2_baseline.png"
+        p = out_dir / "fig_phase2_baseline.png"
         fig.savefig(p, dpi=150)
         saved.append(p)
 
     if personalized is not None:
         fig = _fig_phase3(personalized, L, plt)
-        p = OUT_DIR / "fig_phase3_personalized.png"
+        p = out_dir / "fig_phase3_personalized.png"
         fig.savefig(p, dpi=150)
         saved.append(p)
 
@@ -252,5 +255,10 @@ if __name__ == "__main__":
                         help="Baseline output root; reads <root>/nodp or falls "
                              "back to <root>/dp baseline_history.json "
                              "(default: fl_code/baseline_outputs)")
+    parser.add_argument("--fig-dir", type=str,
+                        default=str(OUT_DIR),
+                        help="Figure output directory "
+                             "(default: fl_code/figures)")
     args = parser.parse_args()
-    main(show=args.show, root=Path(args.root))
+    main(show=args.show, root=Path(args.root),
+         fig_dir=Path(args.fig_dir))

@@ -30,6 +30,7 @@ import numpy as np
 import torch
 import yaml
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from fl_code.data_utils import (
     load_client_data,
@@ -88,7 +89,7 @@ def _add_noise_inplace(delta: OrderedDict[str, torch.Tensor],
 
 def _fedavg_round(global_state: OrderedDict[str, torch.Tensor],
                   cache: dict, weights: dict, args: argparse.Namespace,
-                  device: str, dp: dict | None
+                  device: str, dp: dict | None, round_num: int
                   ) -> tuple[OrderedDict[str, torch.Tensor], dict[str, float]]:
     """One FedAvg round: local train per client → Δᵢ → (DP: local clip+noise)
     → weighted aggregate.  Returns (new_global_state, {cid: train_loss})."""
@@ -96,7 +97,10 @@ def _fedavg_round(global_state: OrderedDict[str, torch.Tensor],
     agg = OrderedDict((k, torch.zeros_like(global_state[k])) for k in state_keys)
     losses: dict[str, float] = {}
 
-    for cid in cache:
+    clients = tqdm(cache.items(), desc=f"Round {round_num}/{args.rounds}",
+                   unit="client", leave=False)
+    for cid, _ in clients:
+        clients.set_postfix_str(cid)
         model = build_tcn(TCNConfig()).to(device)
         model.load_state_dict(global_state)
         losses[cid] = _train_client(model, cache[cid]["train_ds"], args.lr,
@@ -328,7 +332,7 @@ def main(args: argparse.Namespace):
     t0 = time.perf_counter()
     for r in range(1, args.rounds + 1):
         global_state, losses = _fedavg_round(global_state, cache, weights,
-                                             args, device, dp_info)
+                                             args, device, dp_info, r)
         per_client_losses[r] = losses
         mean_loss = float(np.mean(list(losses.values())))
         print(f"Round {r:3d}/{args.rounds}  train_loss={mean_loss:.6f}")

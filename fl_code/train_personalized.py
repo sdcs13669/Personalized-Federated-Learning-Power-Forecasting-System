@@ -7,7 +7,7 @@ corrections ``E_corr``, producing ``Y_final = Y_pre + E_corr``.
 Usage::
 
     python -m fl_code.train_personalized
-    python -m fl_code.train_personalized --global-model fl_code/baseline_outputs/checkpoints/round_020.pt
+    python -m fl_code.train_personalized --global-model fl_code/baseline_outputs/nodp/checkpoints/round_020.pt
     python -m fl_code.train_personalized --clients steel_ind_0 tetouan_city_0
     python -m fl_code.train_personalized --max-seqs 5 --epochs 20
 """
@@ -294,8 +294,12 @@ def _list_clients(whitelist: list[str] | None = None) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _latest_global_checkpoint() -> Path | None:
-    """Newest Phase 2 round checkpoint (baseline_outputs/checkpoints)."""
-    files = sorted((ROOT / "fl_code" / "baseline_outputs" / "checkpoints").glob("round_*.pt"))
+    """Newest non-DP Phase 2 round checkpoint (baseline_outputs/nodp/checkpoints).
+
+    DP global models are never auto-loaded — pass them explicitly via
+    --global-model (e.g. fl_code/baseline_outputs/dp/checkpoints/round_020.pt).
+    """
+    files = sorted((ROOT / "fl_code" / "baseline_outputs" / "nodp" / "checkpoints").glob("round_*.pt"))
     return files[-1] if files else None
 
 
@@ -310,7 +314,8 @@ def main(args: argparse.Namespace):
         raise FileNotFoundError(
             f"Global model not found: {global_path}.  Run Phase 2 first "
             f"(train_baseline.py) — it saves per-round checkpoints to "
-            f"fl_code/baseline_outputs/checkpoints/.")
+            f"fl_code/baseline_outputs/nodp/checkpoints/ (DP models: "
+            f"pass --global-model).")
     print(f"Loading Global TCN: {global_path}")
     global_tcn = build_tcn(TCNConfig()).to(device)
     global_tcn.load_state_dict(torch.load(global_path, map_location=device,
@@ -563,7 +568,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--global-model", type=str, default=None,
                         help="Path to frozen Global TCN checkpoint (default: newest "
-                             "fl_code/baseline_outputs/checkpoints/round_*.pt)")
+                             "non-DP fl_code/baseline_outputs/nodp/checkpoints/"
+                             "round_*.pt; DP models must be passed explicitly)")
     parser.add_argument("--epochs", type=int, default=CORRECTOR_EPOCHS,
                         help=f"Corrector training epochs per client (default: {CORRECTOR_EPOCHS})")
     parser.add_argument("--lr", type=float, default=CORRECTOR_LR,

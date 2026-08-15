@@ -5,9 +5,10 @@ federated-learning library).  Trains a Global TCN point-forecast model (no
 ResidualCorrector) to produce the ``Y_pre`` baseline.  This serves as the
 control against which Phase 3 personalization gains are measured.
 
-DP mode (``--dp-noise``): each client clips its own update and adds Gaussian
-noise **locally before upload**; the server only aggregates — it never sees
-an un-noised update.
+DP mode (``--dp-noise``): each client runs **client-side DP-SGD** —
+per-sample gradient clipping + Gaussian noise at every local SGD step, so the
+uploaded update carries an (ε, δ) guarantee; the server only aggregates and
+never sees un-noised gradients.
 
 Usage::
 
@@ -15,6 +16,7 @@ Usage::
     python -m fl_code.train_baseline --rounds 30 --lr 0.001       # custom
     python -m fl_code.train_baseline --clients steel_ind_0 eld_ind_0  # subset
     python -m fl_code.train_baseline --max-seqs 5 --eval-seqs 3   # fast dev
+    python -m fl_code.train_baseline --dp-noise 1.0 --dp-delta 1e-5  # client-side DP-SGD
     python -m fl_code.train_baseline --output-dir my_run            # custom output root
 """
 
@@ -24,6 +26,7 @@ import argparse
 import json
 import time
 from collections import OrderedDict
+from math import ceil
 from pathlib import Path
 
 import numpy as np
@@ -70,29 +73,66 @@ def _train_client(model: torch.nn.Module, train_ds: LazySlidingWindowDataset,
     return loss
 
 
-def _clip_delta_inplace(delta: OrderedDict[str, torch.Tensor],
-                        clipping_norm: float) -> float:
-    """In-place l2 clip over all tensors concatenated; return pre-clip norm."""
-    norm = float(np.sqrt(sum(t.double().pow(2).sum().item() for t in delta.values())))
-    scale = min(1.0, clipping_norm / max(norm, 1e-6))
-    for t in delta.values():
-        t.mul_(scale)
-    return norm
+def _train_client_dp(model: torch.nn.Module, train_ds: LazySlidingWindowDataset,
+                     lr: float, batch_size: int, local_epochs: int,
+                     device: str, dp: dict) -> float:
+    """Client-side DP-SGD: per-sample gradient clipping + Gaussian noise at
+    every local SGD step; return last epoch's MAE loss.
 
+    Per-sample gradients come from ``torch.func`` (Opacus's GradSampleModule
+    is incompatible with weight_norm-parametrised convolutions).
+    """
+    from torch.func import functional_call, grad, vmap
 
-def _add_noise_inplace(delta: OrderedDict[str, torch.Tensor],
-                       noise_std: float) -> None:
-    """Add independent per-tensor Gaussian noise N(0, noise_std²)."""
-    for t in delta.values():
-        t.add_(torch.randn_like(t) * noise_std)
+    noise_multiplier = dp["noise_multiplier"]
+    clipping_norm = dp["clipping_norm"]
+    params = dict(model.named_parameters())
+
+    def loss_fn(p, x, yy):
+        out = functional_call(model, p, (x.unsqueeze(0),))
+        return (out.squeeze(0) - yy).abs().mean()
+
+    per_sample_grad = vmap(grad(loss_fn, argnums=0), in_dims=(None, 0, 0),
+                           randomness="different")
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    loss = float("nan")
+    for _ in range(local_epochs):
+        loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                            drop_last=False)
+        epoch_loss = 0.0
+        n_samples = 0
+        for X, y, *_ in loader:
+            X = X.to(device)
+            y = y.to(device)
+            optimizer.zero_grad()
+            grads = per_sample_grad(params, X, y)      # dict: (B, *shape)
+            norms = torch.sqrt(sum(
+                g.double().pow(2).sum(dim=tuple(range(1, g.dim())))
+                for g in grads.values()))
+            scale = (clipping_norm / norms.clamp_min(1e-12)).clamp_max(1.0).float()
+            b = X.shape[0]
+            for name, p in model.named_parameters():
+                g = grads[name]
+                p.grad = (g * scale.view(b, *([1] * (g.dim() - 1)))).sum(0) / b
+                p.grad += torch.randn_like(p.grad) * (
+                    noise_multiplier * clipping_norm / b)
+            optimizer.step()
+            with torch.no_grad():
+                out = model(X)
+                epoch_loss += (out - y).abs().sum().item()
+                n_samples += b
+        loss = epoch_loss / n_samples
+    return loss
 
 
 def _fedavg_round(global_state: OrderedDict[str, torch.Tensor],
                   cache: dict, weights: dict, args: argparse.Namespace,
                   device: str, dp: dict | None, round_num: int
                   ) -> tuple[OrderedDict[str, torch.Tensor], dict[str, float]]:
-    """One FedAvg round: local train per client → Δᵢ → (DP: local clip+noise)
-    → weighted aggregate.  Returns (new_global_state, {cid: train_loss})."""
+    """One FedAvg round: local train per client → Δᵢ → weighted aggregate
+    (DP: client-side DP-SGD local training).  Returns (new_global_state,
+    {cid: train_loss})."""
     state_keys = list(global_state.keys())
     agg = OrderedDict((k, torch.zeros_like(global_state[k])) for k in state_keys)
     losses: dict[str, float] = {}
@@ -103,17 +143,17 @@ def _fedavg_round(global_state: OrderedDict[str, torch.Tensor],
         clients.set_postfix_str(cid)
         model = build_tcn(TCNConfig()).to(device)
         model.load_state_dict(global_state)
-        losses[cid] = _train_client(model, cache[cid]["train_ds"], args.lr,
-                                    args.batch_size, args.local_epochs, device)
+        if dp:
+            losses[cid] = _train_client_dp(model, cache[cid]["train_ds"],
+                                           args.lr, args.batch_size,
+                                           args.local_epochs, device, dp)
+        else:
+            losses[cid] = _train_client(model, cache[cid]["train_ds"], args.lr,
+                                        args.batch_size, args.local_epochs,
+                                        device)
         delta = OrderedDict(
             (k, model.state_dict()[k] - global_state[k]) for k in state_keys)
         del model
-        if dp:
-            # Client-side DP: clip + noise locally before the update leaves
-            # the client — the server never sees an un-noised update.
-            _clip_delta_inplace(delta, dp["clipping_norm"])
-            _add_noise_inplace(delta,
-                               dp["noise_multiplier"] * dp["clipping_norm"])
         w = weights[cid]
         for k in state_keys:
             agg[k].add_(delta[k], alpha=w)
@@ -155,19 +195,30 @@ def _load_client_cache(client_id: str, stride: int,
     }
 
 
-def _compute_epsilon(noise_multiplier: float, rounds: int,
-                     sample_rate: float, delta: float) -> float:
-    """(ε, δ)-DP budget for DP-FedAvg via RDP composition (Opacus accountant).
+def _compute_epsilon(noise_multiplier: float, rounds: int, delta: float,
+                     client_sizes: list[int], batch_size: int,
+                     local_epochs: int) -> float:
+    """Worst-case (ε, δ)-DP budget across clients for client-side DP-SGD.
 
-    ``sample_rate = num_sampled_clients / num_clients`` — every client
-    participates in every round, so it is 1.0.
+    Each client runs ``ceil(n_train / B) * local_epochs`` SGD steps per round
+    with sampling rate ``B / n_train`` (Opacus convention for shuffled
+    batches); per-step RDP via the Poisson-subsampled Gaussian, composed over
+    all local steps × rounds.  The smallest client has the largest sampling
+    rate and usually binds.
     """
     from opacus.accountants import RDPAccountant
-    accountant = RDPAccountant()
-    for _ in range(rounds):
-        accountant.step(noise_multiplier=noise_multiplier,
-                        sample_rate=sample_rate)
-    return float(accountant.get_epsilon(delta))
+    from opacus.accountants.analysis.rdp import compute_rdp, get_privacy_spent
+
+    orders = RDPAccountant.DEFAULT_ALPHAS
+    worst = 0.0
+    for n_train in client_sizes:
+        q = batch_size / n_train
+        steps = ceil(n_train / batch_size) * local_epochs * rounds
+        rdp = compute_rdp(q=q, noise_multiplier=noise_multiplier,
+                          steps=steps, orders=orders)
+        eps, _ = get_privacy_spent(orders=orders, rdp=rdp, delta=delta)
+        worst = max(worst, float(eps))
+    return worst
 
 
 def _list_clients(whitelist: list[str] | None = None) -> list[str]:
@@ -256,25 +307,29 @@ def main(args: argparse.Namespace):
     print(f"Model params: {n_params:,}")
 
     # DP-FedAvg when --dp-noise given.  Privacy is enforced **client-side**:
-    # each client clips its own update to l2 ≤ C and adds Gaussian noise
-    # N(0, (σC)²) before uploading — the server (aggregator) never sees an
-    # un-noised update, so the privacy guarantee does not depend on trusting
-    # the server.  Per-client mechanism: sensitivity C, noise σC → noise
-    # multiplier σ, aggregated with any weights (post-processing).
+    # each client runs DP-SGD locally — per-sample gradient clipping to
+    # l2 ≤ C and Gaussian noise N(0, (σC)²) at every SGD step — before
+    # uploading the update; the server (aggregator) never sees un-noised
+    # gradients, so the guarantee does not depend on trusting the server.
+    # Per-step mechanism: sensitivity C, noise σC → noise multiplier σ;
+    # per-client budget composes all local steps × rounds with sampling
+    # rate B/n (subsampling amplification); aggregation is post-processing.
     dp_info = None
     if args.dp_noise is not None and args.dp_noise > 0:
-        sample_rate = 1.0   # every client participates in every round
-        eps = _compute_epsilon(args.dp_noise, args.rounds,
-                               sample_rate, args.dp_delta)
+        client_sizes = [cache[cid]["n_train"] for cid in client_ids]
+        eps = _compute_epsilon(args.dp_noise, args.rounds, args.dp_delta,
+                               client_sizes, args.batch_size,
+                               args.local_epochs)
         dp_info = {
             "noise_multiplier": args.dp_noise,
             "clipping_norm": args.dp_clip,
             "delta": args.dp_delta,
             "epsilon": round(eps, 4),
         }
-        print(f"DP-FedAvg enabled (client-side clipping + noise): "
-              f"σ={args.dp_noise}, C={args.dp_clip}, "
-              f"(ε={eps:.2f}, δ={args.dp_delta}) after {args.rounds} rounds")
+        print(f"DP-FedAvg enabled (client-side DP-SGD): per-sample gradient "
+              f"clipping C={args.dp_clip} + Gaussian noise σ={args.dp_noise} "
+              f"at every local SGD step; (ε={eps:.2f}, δ={args.dp_delta}) "
+              f"after {args.rounds} rounds")
 
     # DP and non-DP runs write to separate sub-directories so they never
     # overwrite each other.
@@ -416,12 +471,14 @@ if __name__ == "__main__":
                              "<output-dir>/dp, non-DP to <output-dir>/nodp "
                              "(default: fl_code/baseline_outputs)")
 
-    # DP-FedAvg — client-side clipping + Gaussian noise before upload
+    # DP-FedAvg — client-side DP-SGD (per-sample gradient clip + noise)
     parser.add_argument("--dp-noise", type=float, default=None,
-                        help="Enable DP-FedAvg: Gaussian noise multiplier σ "
+                        help="Enable DP-FedAvg via client-side DP-SGD: "
+                             "per-sample gradient noise multiplier σ "
                              "(default: None = no DP)")
     parser.add_argument("--dp-clip", type=float, default=1.0,
-                        help="Per-update clipping norm C (default: 1.0)")
+                        help="Per-sample gradient clipping norm C "
+                             "(default: 1.0)")
     parser.add_argument("--dp-delta", type=float, default=1e-5,
                         help="DP delta for the (ε, δ) budget (default: 1e-5)")
     args = parser.parse_args()

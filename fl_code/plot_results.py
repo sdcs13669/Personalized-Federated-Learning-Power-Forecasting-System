@@ -30,7 +30,6 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-BASELINE_JSON = ROOT / "fl_code" / "baseline_outputs" / "baseline_history.json"
 PERSONALIZED_JSON = ROOT / "fl_code" / "personalized_outputs" / "personalized_results.json"
 OUT_DIR = ROOT / "fl_code" / "figures"
 
@@ -198,7 +197,7 @@ def _fig_phase3(personalized: dict, L: dict, plt):
 # Main
 # ---------------------------------------------------------------------------
 
-def main(show: bool = False):
+def main(show: bool = False, root: Path | None = None):
     import matplotlib
     matplotlib.use("TkAgg" if show else "Agg")
     import matplotlib.pyplot as plt
@@ -206,11 +205,19 @@ def main(show: bool = False):
     cn = _setup_cn_font()
     L = _labels(cn)
 
-    baseline = _load_json(BASELINE_JSON)
+    root = root or (ROOT / "fl_code" / "baseline_outputs")
+    baseline = None
+    for cand in (root / "nodp" / "baseline_history.json",
+                 root / "dp" / "baseline_history.json"):
+        baseline = _load_json(cand)
+        if baseline is not None:
+            print(f"Using Phase 2 results: {cand}")
+            break
     personalized = _load_json(PERSONALIZED_JSON)
     if baseline is None and personalized is None:
         raise SystemExit(
-            f"No result files found:\n  {BASELINE_JSON}\n  {PERSONALIZED_JSON}\n"
+            f"No result files found:\n  {root / 'nodp' / 'baseline_history.json'}\n"
+            f"  {root / 'dp' / 'baseline_history.json'}\n  {PERSONALIZED_JSON}\n"
             f"Run train_baseline.py / train_personalized.py first.")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -239,5 +246,10 @@ if __name__ == "__main__":
         description="Plot Phase 2/3 training & validation results")
     parser.add_argument("--show", action="store_true",
                         help="Open figure windows (GUI)")
+    parser.add_argument("--root", type=str,
+                        default=str(ROOT / "fl_code" / "baseline_outputs"),
+                        help="Baseline output root; reads <root>/nodp or falls "
+                             "back to <root>/dp baseline_history.json "
+                             "(default: fl_code/baseline_outputs)")
     args = parser.parse_args()
-    main(show=args.show)
+    main(show=args.show, root=Path(args.root))

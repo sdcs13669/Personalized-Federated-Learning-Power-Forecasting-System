@@ -11,6 +11,7 @@ Usage::
     python -m fl_code.train_baseline --rounds 30 --lr 0.001       # custom
     python -m fl_code.train_baseline --clients steel_ind_0 eld_ind_0  # subset
     python -m fl_code.train_baseline --max-seqs 5 --eval-seqs 3   # fast dev
+    python -m fl_code.train_baseline --output-dir my_run            # custom output root
 """
 
 from __future__ import annotations
@@ -44,7 +45,6 @@ from fl_code.config import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_CONFIG_PATH = ROOT / "fl_code" / "models" / "client_config.yaml"
-OUTPUT_DIR = ROOT / "fl_code" / "baseline_outputs"
 
 # Per-actor data cache.  ``client_fn`` runs inside each Ray actor process;
 # this module-level dict lets an actor load its own client's data exactly
@@ -368,8 +368,12 @@ def main(args: argparse.Namespace):
     else:
         strategy = base_strategy
 
+    # DP and non-DP runs write to separate sub-directories so they never
+    # overwrite each other.
+    variant_dir = Path(args.output_dir) / ("dp" if dp_info else "nodp")
+    variant_dir.mkdir(parents=True, exist_ok=True)
+
     # --- Save run config (model architecture + hyperparameters) ---
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     tcn_cfg = TCNConfig().to_dict()
     rf = 1 + 2 * (tcn_cfg["kernel_size"] - 1) * (2 ** len(tcn_cfg["num_channels"]) - 1)
     config_json = {
@@ -401,9 +405,9 @@ def main(args: argparse.Namespace):
         },
         "dp": dp_info,
     }
-    with open(OUTPUT_DIR / "config.json", "w") as f:
+    with open(variant_dir / "config.json", "w") as f:
         json.dump(config_json, f, indent=2, default=str)
-    print(f"Saved run config to {OUTPUT_DIR / 'config.json'}")
+    print(f"Saved run config to {variant_dir / 'config.json'}")
 
     # --- Run simulation ---
     print(f"\nStarting Flower simulation: {args.rounds} rounds × {len(client_ids)} clients")
@@ -430,7 +434,7 @@ def main(args: argparse.Namespace):
     tmp_model.load_state_dict(final_state)
 
     # --- Save per-round checkpoints (every aggregated model) ---
-    ckpt_dir = OUTPUT_DIR / "checkpoints"
+    ckpt_dir = variant_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     for i, params_obj in enumerate(strategy.round_parameters, start=1):
         ndarrays = parameters_to_ndarrays(params_obj)   # Parameters → ndarray
@@ -449,7 +453,7 @@ def main(args: argparse.Namespace):
     print(f"\nFinal — WAPE={results['wape']:.4f}  MAE={results['avg_mae']:.4f}")
 
     # --- Save outputs (final model = last round checkpoint) ---
-    with open(OUTPUT_DIR / "baseline_history.json", "w") as f:
+    with open(variant_dir / "baseline_history.json", "w") as f:
         json.dump({
             "args": {k: str(v) for k, v in vars(args).items()},
             "num_clients": len(client_ids),
@@ -479,7 +483,7 @@ def main(args: argparse.Namespace):
         print(f"  {cid:20s}  MAE={m.get('mae', float('nan')):.4f}  "
               f"RMSE={m.get('rmse', float('nan')):.4f}  n_train={m.get('n_train', 0)}")
 
-    print(f"\nOutputs saved to {OUTPUT_DIR}")
+    print(f"\nOutputs saved to {variant_dir}")
 
 
 # ============================================================================
@@ -508,6 +512,11 @@ if __name__ == "__main__":
                         help="Cap training sequences per client (default: all)")
     parser.add_argument("--clients", nargs="*", default=None,
                         help="Client ids to include (default: all)")
+    parser.add_argument("--output-dir", type=str,
+                        default=str(ROOT / "fl_code" / "baseline_outputs"),
+                        help="Output root directory; DP runs go to "
+                             "<output-dir>/dp, non-DP to <output-dir>/nodp "
+                             "(default: fl_code/baseline_outputs)")
 
     # DP-FedAvg (central DP, server-side fixed clipping)
     parser.add_argument("--dp-noise", type=float, default=None,

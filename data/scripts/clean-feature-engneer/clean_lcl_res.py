@@ -6,6 +6,11 @@
 - 异常检测: diff IQR (系数 2.5) 逐户独立, 不跨户借信息 (§8 防泄漏)
 - 物理边界: KWH > 0
 - 填充: 三次样条 (interior only)
+- 社区聚合: 户级清洗后按 client_config.yaml 中 lcl_res 各客户端的序列顺序,
+  每相邻 COMMUNITY_SIZE 户求和为一个社区, 输出社区曲线
+  (processed/lcl_res.csv); 户级保留 (lcl_res_households.csv);
+  分组映射写 lcl_res_community_map.json 供 client_config 再生成
+  (求和为客户端内部预处理, 不违反 per-client 规范化约束)
 """
 from __future__ import annotations
 
@@ -22,6 +27,7 @@ DATASET_ID = "lcl_res"
 CATEGORY_ID = 0          # 居民
 IQR_MULTIPLIER_LABEL = 2.5
 MAX_GAP_DROP = 48        # drop users with gap > 48 steps (24h)
+COMMUNITY_SIZE = 30      # 每相邻 30 户聚合为一个社区 (174 -> 6 个, 147 -> 5 个)
 
 
 def _max_consecutive_nan(arr: np.ndarray) -> int:
@@ -153,17 +159,85 @@ def clean() -> pd.DataFrame:
     return df_out[keep]
 
 
+def _client_sequences() -> dict[str, list[str]]:
+    """lcl_res 客户端 → 有序住户列表（来自 client_config.yaml，保持原顺序）。"""
+    import yaml
+
+    cfg_path = ROOT.parent / "fl_code" / "models" / "client_config.yaml"
+    with open(cfg_path) as f:
+        config = yaml.safe_load(f)
+    return {
+        cid: list(cfg["sequences"])
+        for ds_cfg in config.values()
+        for cid, cfg in ds_cfg["clients"].items()
+        if cid.startswith("lcl_res_")
+    }
+
+
+def aggregate_communities(df_households: pd.DataFrame,
+                          size: int = COMMUNITY_SIZE
+                          ) -> tuple[pd.DataFrame, dict]:
+    """把每客户端的相邻 ``size`` 户求和为一个社区。
+
+    分组严格按 client_config.yaml 中序列的列出顺序；已被清洗丢弃的住户
+    跳过（该社区由块内幸存住户组成）。社区曲线 = nansum（全部缺失的
+    时间戳置 NaN）。
+    """
+    X = df_households.set_index("datetime")
+    available = set(X.columns)
+    communities: dict[str, np.ndarray] = {}
+    comm_map: dict[str, dict] = {}
+    for client_idx, (cid, seqs) in enumerate(
+            sorted(_client_sequences().items())):
+        chunks = [seqs[i:i + size] for i in range(0, len(seqs), size)]
+        for k, chunk in enumerate(chunks):
+            members = [c for c in chunk if c in available]
+            if not members:
+                continue
+            name = f"comm_{client_idx}{k:02d}"
+            sub = X[members].values.astype(np.float64)
+            comm = np.nansum(sub, axis=1)
+            comm[np.isnan(sub).all(axis=1)] = np.nan
+            communities[name] = comm
+            comm_map[name] = {
+                "client": cid,
+                "households": members,
+                "n_households": len(members),
+            }
+    df_comm = pd.DataFrame(communities, index=X.index).reset_index()
+    df_comm = add_public_features(df_comm)
+    keep = (["datetime"] + list(communities.keys()) +
+            ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "is_weekend",
+             "month_sin", "month_cos", "category_id"])
+    return df_comm[keep], comm_map
+
+
 def main() -> None:
+    import json
+
     df = clean()
-    out = PROC / f"{DATASET_ID}.csv"
-    df.to_csv(out, index=False)
     user_cols = [c for c in df.columns if c.startswith("MAC")]
-    sub = df[user_cols]
-    n_public = len(df.columns) - len(user_cols)
-    print(f"Wrote {out} ({len(df)} rows, "
-          f"{len(user_cols)} users + {n_public} public = {len(df.columns)} cols)")
-    print(f"Final KWH missing_rate={sub.isna().mean().mean():.4f} "
-          f"range=[{sub.min().min():.3f}, {sub.max().max():.3f}]")
+
+    # 户级保留（参考/溯源用）
+    households_out = PROC / f"{DATASET_ID}_households.csv"
+    df.to_csv(households_out, index=False)
+    print(f"Wrote {households_out} ({len(df)} rows, {len(user_cols)} users)")
+
+    # 社区聚合输出（训练用主数据）
+    df_comm, comm_map = aggregate_communities(df)
+    out = PROC / f"{DATASET_ID}.csv"
+    df_comm.to_csv(out, index=False)
+    comm_cols = [c for c in df_comm.columns if c.startswith("comm_")]
+    print(f"Wrote {out} ({len(df_comm)} rows, "
+          f"{len(comm_cols)} communities)")
+    for name, info in comm_map.items():
+        print(f"  {name}: {info['client']} "
+              f"{info['n_households']} households")
+
+    map_out = PROC / f"{DATASET_ID}_community_map.json"
+    with open(map_out, "w") as f:
+        json.dump(comm_map, f, indent=2)
+    print(f"Wrote {map_out}")
 
 
 if __name__ == "__main__":

@@ -6,11 +6,11 @@
 - 异常检测: diff IQR (系数 2.5) 逐户独立, 不跨户借信息 (§8 防泄漏)
 - 物理边界: KWH > 0
 - 填充: 三次样条 (interior only)
-- 社区聚合: 户级清洗后按 client_config.yaml 中 lcl_res 各客户端的序列顺序,
-  每相邻 COMMUNITY_SIZE 户求和为一个社区, 输出社区曲线
-  (processed/lcl_res.csv); 户级保留 (lcl_res_households.csv);
-  分组映射写 lcl_res_community_map.json 供 client_config 再生成
-  (求和为客户端内部预处理, 不违反 per-client 规范化约束)
+- 社区聚合: 户级清洗后按 data/manifests/lcl_res_communities.json 中冻结的
+  分组求和（相邻 30 户/社区）, 输出社区曲线 (processed/lcl_res.csv);
+  户级保留 (lcl_res_households.csv); 分组映射写 lcl_res_community_map.json
+  供 client_config 再生成 (求和为客户端内部预处理, 不违反 per-client
+  规范化约束)
 """
 from __future__ import annotations
 
@@ -27,7 +27,6 @@ DATASET_ID = "lcl_res"
 CATEGORY_ID = 0          # 居民
 IQR_MULTIPLIER_LABEL = 2.5
 MAX_GAP_DROP = 48        # drop users with gap > 48 steps (24h)
-COMMUNITY_SIZE = 30      # 每相邻 30 户聚合为一个社区 (174 -> 6 个, 147 -> 5 个)
 
 
 def _max_consecutive_nan(arr: np.ndarray) -> int:
@@ -159,51 +158,44 @@ def clean() -> pd.DataFrame:
     return df_out[keep]
 
 
-def _client_sequences() -> dict[str, list[str]]:
-    """lcl_res 客户端 → 有序住户列表（来自 client_config.yaml，保持原顺序）。"""
-    import yaml
+def _community_manifest() -> dict[str, dict]:
+    """社区 → {client, households}（冻结在 data/manifests/lcl_res_communities.json）。
 
-    cfg_path = ROOT.parent / "fl_code" / "models" / "client_config.yaml"
-    with open(cfg_path) as f:
-        config = yaml.safe_load(f)
-    return {
-        cid: list(cfg["sequences"])
-        for ds_cfg in config.values()
-        for cid, cfg in ds_cfg["clients"].items()
-        if cid.startswith("lcl_res_")
-    }
+    client_config.yaml 中 lcl_res 的序列已是社区名，无法再从中还原住户
+    分组，因此分组在首次生成后冻结为 manifest，保证任何机器上重跑
+    得到完全一致的社区。
+    """
+    import json
+
+    manifest = ROOT / "manifests" / "lcl_res_communities.json"
+    with open(manifest) as f:
+        return json.load(f)
 
 
-def aggregate_communities(df_households: pd.DataFrame,
-                          size: int = COMMUNITY_SIZE
+def aggregate_communities(df_households: pd.DataFrame
                           ) -> tuple[pd.DataFrame, dict]:
-    """把每客户端的相邻 ``size`` 户求和为一个社区。
+    """按冻结 manifest 的分组把住户求和为社区。
 
-    分组严格按 client_config.yaml 中序列的列出顺序；已被清洗丢弃的住户
-    跳过（该社区由块内幸存住户组成）。社区曲线 = nansum（全部缺失的
-    时间戳置 NaN）。
+    已被清洗丢弃的住户跳过（该社区由组内幸存住户组成）。社区曲线 =
+    nansum（全部缺失的时间戳置 NaN）。
     """
     X = df_households.set_index("datetime")
     available = set(X.columns)
     communities: dict[str, np.ndarray] = {}
     comm_map: dict[str, dict] = {}
-    for client_idx, (cid, seqs) in enumerate(
-            sorted(_client_sequences().items())):
-        chunks = [seqs[i:i + size] for i in range(0, len(seqs), size)]
-        for k, chunk in enumerate(chunks):
-            members = [c for c in chunk if c in available]
-            if not members:
-                continue
-            name = f"comm_{client_idx}{k:02d}"
-            sub = X[members].values.astype(np.float64)
-            comm = np.nansum(sub, axis=1)
-            comm[np.isnan(sub).all(axis=1)] = np.nan
-            communities[name] = comm
-            comm_map[name] = {
-                "client": cid,
-                "households": members,
-                "n_households": len(members),
-            }
+    for name, info in _community_manifest().items():
+        members = [c for c in info["households"] if c in available]
+        if not members:
+            continue
+        sub = X[members].values.astype(np.float64)
+        comm = np.nansum(sub, axis=1)
+        comm[np.isnan(sub).all(axis=1)] = np.nan
+        communities[name] = comm
+        comm_map[name] = {
+            "client": info["client"],
+            "households": members,
+            "n_households": len(members),
+        }
     df_comm = pd.DataFrame(communities, index=X.index).reset_index()
     df_comm = add_public_features(df_comm)
     keep = (["datetime"] + list(communities.keys()) +

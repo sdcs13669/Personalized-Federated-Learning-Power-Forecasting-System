@@ -33,7 +33,6 @@ import argparse
 import json
 import time
 from collections import OrderedDict
-from math import ceil
 from pathlib import Path
 
 import numpy as np
@@ -42,11 +41,6 @@ import yaml
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from fl_code.data_utils import (
-    load_client_data,
-    preprocess,
-    LazySlidingWindowDataset,
-)
 from fl_code.train_eval_utils import train_epoch, evaluate
 from fl_code.models import TCNConfig, build_tcn
 from fl_code.config import (
@@ -54,6 +48,12 @@ from fl_code.config import (
     BASELINE_ROUNDS, BASELINE_LOCAL_EPOCHS,
     BASELINE_LR, BASELINE_BATCH_SIZE,
 )
+from fl_code.fed_core.accounting import (
+    dp_epsilon as _dp_epsilon,
+    dp_epsilon_worst as _dp_epsilon_worst,
+    sigma_for_epsilon as _sigma_for_epsilon,
+)
+from fl_code.fed_core.data import load_client_cache as _load_client_cache
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_CONFIG_PATH = ROOT / "fl_code" / "models" / "client_config.yaml"
@@ -173,98 +173,6 @@ def _fedavg_round(global_state: OrderedDict[str, torch.Tensor],
 # ============================================================================
 # Data helpers
 # ============================================================================
-
-def _load_client_cache(client_id: str, stride: int,
-                       max_seqs: int | None = None) -> dict:
-    """Load + preprocess client data; returned dict holds the train Dataset
-    plus the metadata needed for post-training eval."""
-    df, info = load_client_data(client_id)
-
-    feat_names = set(info["public_features"] + info["local_features"])
-    seqs = [c for c in df.columns if c not in feat_names and c != "datetime"]
-
-    if max_seqs and len(seqs) > max_seqs:
-        seqs = seqs[:max_seqs]
-
-    df_norm, _ = preprocess(df, seqs, info["local_features"])
-
-    train_ds = LazySlidingWindowDataset(
-        df_norm, seqs, info["public_features"],
-        stride=stride, train=True,
-    )
-
-    return {
-        "df_norm": df_norm,
-        "seqs": seqs,
-        "public_cols": info["public_features"],
-        "local_cols": info["local_features"],
-        "train_ds": train_ds,
-        "n_train": len(train_ds),
-    }
-
-
-def _dp_epsilon(n_train: int, batch_size: int, local_epochs: int,
-                rounds: int, noise_multiplier: float, delta: float) -> float:
-    """One client's (ε, δ) for client-side DP-SGD, via PLD accounting.
-
-    Composes ``ceil(n/B) * local_epochs * rounds`` Poisson-subsampled
-    Gaussian steps (sampling rate q = B/n, noise multiplier σ, sensitivity 1
-    after clipping) and returns ε at the given δ.  Uses Google's
-    dp-accounting (PLD accountant) — the same framework as Schuchardt et
-    al., ICML 2025; tighter than RDP + Balle conversion (the gap reaches
-    ~2.3× at small sampling rates).
-    """
-    from dp_accounting import dp_event
-    from dp_accounting.pld import pld_privacy_accountant
-
-    q = batch_size / n_train
-    steps = ceil(n_train / batch_size) * local_epochs * rounds
-    accountant = pld_privacy_accountant.PLDAccountant()
-    accountant.compose(dp_event.PoissonSampledDpEvent(
-        q, dp_event.GaussianDpEvent(noise_multiplier)), steps)
-    return float(accountant.get_epsilon(delta))
-
-
-def _dp_epsilon_worst(client_sizes: list[int], batch_size: int,
-                      local_epochs: int, rounds: int,
-                      noise_multiplier: float, delta: float) -> float:
-    """System-level ε for a uniform σ: worst (largest) ε across clients."""
-    return max(_dp_epsilon(n, batch_size, local_epochs, rounds,
-                           noise_multiplier, delta) for n in client_sizes)
-
-
-def _sigma_for_epsilon(n_train: int, batch_size: int, local_epochs: int,
-                       rounds: int, delta: float, target: float
-                       ) -> tuple[float, float]:
-    """Noise multiplier σ that spends exactly ``target`` ε for one client.
-
-    ε(σ) is monotone decreasing and locally ~power-law in σ (exponent drifts
-    between −2 and −3), so a fixed ε ∝ 1/σ² correction oscillates.  A secant
-    method on log-ε vs log-σ converges in a few exact PLD evaluations.
-    Returns (σ, ε) with ε within 0.2% of ``target``.
-    """
-    from math import exp, log
-
-    def eps_at(sigma: float) -> float:
-        return _dp_epsilon(n_train, batch_size, local_epochs, rounds,
-                           sigma, delta)
-
-    sigma_a, eps_a = 1.0, eps_at(1.0)
-    if abs(eps_a - target) / target < 0.002:
-        return sigma_a, eps_a
-    # second point: first-order correction assuming ε ≈ c/σ²
-    sigma_b = sigma_a * (eps_a / target) ** 0.5
-    eps_b = eps_at(sigma_b)
-    for _ in range(6):
-        if abs(eps_b - target) / target < 0.002:
-            break
-        xa, ya = log(sigma_a), log(eps_a)
-        xb, yb = log(sigma_b), log(eps_b)
-        sigma_c = exp(xa + (log(target) - ya) * (xb - xa) / (yb - ya))
-        sigma_a, eps_a = sigma_b, eps_b
-        sigma_b, eps_b = sigma_c, eps_at(sigma_c)
-    return sigma_b, eps_b
-
 
 def _list_clients(whitelist: list[str] | None = None) -> list[str]:
     """All client IDs from client_config.yaml, optionally filtered."""

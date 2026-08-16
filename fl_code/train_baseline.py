@@ -1,9 +1,10 @@
 """Phase 2: Federated Baseline — FedAvg GlobalTCN training.
 
-Single-process FedAvg simulation across all clients on one machine (no
-federated-learning library).  Trains a Global TCN point-forecast model (no
-ResidualCorrector) to produce the ``Y_pre`` baseline.  This serves as the
-control against which Phase 3 personalization gains are measured.
+FedAvg simulation across all clients on one machine via flwr run_simulation
+(ray backend; same client/strategy code as the App line).  Trains a Global
+TCN point-forecast model (no ResidualCorrector) to produce the ``Y_pre``
+baseline.  This serves as the control against which Phase 3 personalization
+gains are measured.
 
 DP mode: each client runs **client-side DP-SGD** —
 per-sample gradient clipping + Gaussian noise at every local SGD step, so the
@@ -38,10 +39,8 @@ from pathlib import Path
 import numpy as np
 import torch
 import yaml
-from torch.utils.data import DataLoader
-from tqdm import tqdm
 
-from fl_code.train_eval_utils import train_epoch, evaluate
+from fl_code.train_eval_utils import evaluate
 from fl_code.models import TCNConfig, build_tcn
 from fl_code.config import (
     INPUT_STEPS, PRED_LEN, STRIDE, TRAIN_RATIO,
@@ -49,7 +48,6 @@ from fl_code.config import (
     BASELINE_LR, BASELINE_BATCH_SIZE,
 )
 from fl_code.fed_core.accounting import (
-    dp_epsilon as _dp_epsilon,
     dp_epsilon_worst as _dp_epsilon_worst,
     sigma_for_epsilon as _sigma_for_epsilon,
 )
@@ -57,117 +55,6 @@ from fl_code.fed_core.data import load_client_cache as _load_client_cache
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_CONFIG_PATH = ROOT / "fl_code" / "models" / "client_config.yaml"
-
-
-# ============================================================================
-# FedAvg round (single process)
-# ============================================================================
-
-def _train_client(model: torch.nn.Module, train_ds: LazySlidingWindowDataset,
-                  lr: float, batch_size: int, local_epochs: int,
-                  device: str) -> float:
-    """Train ``model`` locally for ``local_epochs``; return last epoch's MAE loss."""
-    loader = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        drop_last=False,
-    )
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    loss = float("nan")
-    for _ in range(local_epochs):
-        loss = train_epoch(model, loader, optimizer, device)
-    return loss
-
-
-def _train_client_dp(model: torch.nn.Module, train_ds: LazySlidingWindowDataset,
-                     lr: float, batch_size: int, local_epochs: int,
-                     device: str, dp: dict) -> float:
-    """Client-side DP-SGD: per-sample gradient clipping + Gaussian noise at
-    every local SGD step; return last epoch's MAE loss.
-
-    Per-sample gradients come from ``torch.func`` (Opacus's GradSampleModule
-    is incompatible with weight_norm-parametrised convolutions).
-    """
-    from torch.func import functional_call, grad, vmap
-
-    noise_multiplier = dp["noise_multiplier"]
-    clipping_norm = dp["clipping_norm"]
-    params = dict(model.named_parameters())
-
-    def loss_fn(p, x, yy):
-        out = functional_call(model, p, (x.unsqueeze(0),))
-        return (out.squeeze(0) - yy).abs().mean()
-
-    per_sample_grad = vmap(grad(loss_fn, argnums=0), in_dims=(None, 0, 0),
-                           randomness="different")
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    loss = float("nan")
-    for _ in range(local_epochs):
-        loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                            drop_last=False)
-        epoch_loss = 0.0
-        n_samples = 0
-        for X, y, *_ in loader:
-            X = X.to(device)
-            y = y.to(device)
-            optimizer.zero_grad()
-            grads = per_sample_grad(params, X, y)      # dict: (B, *shape)
-            norms = torch.sqrt(sum(
-                g.double().pow(2).sum(dim=tuple(range(1, g.dim())))
-                for g in grads.values()))
-            scale = (clipping_norm / norms.clamp_min(1e-12)).clamp_max(1.0).float()
-            b = X.shape[0]
-            for name, p in model.named_parameters():
-                g = grads[name]
-                p.grad = (g * scale.view(b, *([1] * (g.dim() - 1)))).sum(0) / b
-                p.grad += torch.randn_like(p.grad) * (
-                    noise_multiplier * clipping_norm / b)
-            optimizer.step()
-            with torch.no_grad():
-                out = model(X)
-                epoch_loss += (out - y).abs().sum().item()
-                n_samples += b
-        loss = epoch_loss / n_samples
-    return loss
-
-
-def _fedavg_round(global_state: OrderedDict[str, torch.Tensor],
-                  cache: dict, weights: dict, args: argparse.Namespace,
-                  device: str, dp: dict | None, round_num: int
-                  ) -> tuple[OrderedDict[str, torch.Tensor], dict[str, float]]:
-    """One FedAvg round: local train per client → Δᵢ → weighted aggregate
-    (DP: client-side DP-SGD local training with per-client σᵢ).  Returns
-    (new_global_state, {cid: train_loss})."""
-    state_keys = list(global_state.keys())
-    agg = OrderedDict((k, torch.zeros_like(global_state[k])) for k in state_keys)
-    losses: dict[str, float] = {}
-
-    clients = tqdm(cache.items(), desc=f"Round {round_num}/{args.rounds}",
-                   unit="client", leave=False)
-    for cid, _ in clients:
-        clients.set_postfix_str(cid)
-        model = build_tcn(TCNConfig()).to(device)
-        model.load_state_dict(global_state)
-        if dp:
-            dp_local = {**dp, "noise_multiplier": dp["sigma"][cid]}
-            losses[cid] = _train_client_dp(model, cache[cid]["train_ds"],
-                                           args.lr, args.batch_size,
-                                           args.local_epochs, device, dp_local)
-        else:
-            losses[cid] = _train_client(model, cache[cid]["train_ds"], args.lr,
-                                        args.batch_size, args.local_epochs,
-                                        device)
-        delta = OrderedDict(
-            (k, model.state_dict()[k] - global_state[k]) for k in state_keys)
-        del model
-        w = weights[cid]
-        for k in state_keys:
-            agg[k].add_(delta[k], alpha=w)
-
-    new_state = OrderedDict((k, global_state[k] + agg[k]) for k in state_keys)
-    return new_state, losses
 
 
 # ============================================================================
@@ -328,7 +215,7 @@ def main(args: argparse.Namespace):
     rf = 1 + 2 * (tcn_cfg["kernel_size"] - 1) * (2 ** len(tcn_cfg["num_channels"]) - 1)
     config_json = {
         "script": "fl_code.train_baseline",
-        "phase": "Phase 2 — FedAvg GlobalTCN (single-process simulation)",
+        "phase": "Phase 2 — FedAvg GlobalTCN (flwr simulation)",
         "model": {
             "name": "GlobalTCN",
             **tcn_cfg,
@@ -359,38 +246,59 @@ def main(args: argparse.Namespace):
         json.dump(config_json, f, indent=2, default=str)
     print(f"Saved run config to {variant_dir / 'config.json'}")
 
-    # --- Run FedAvg rounds (single process) ---
-    print(f"\nStarting FedAvg simulation: {args.rounds} rounds × "
+    # --- Run FedAvg rounds via flwr simulation (ray backend) ---
+    print(f"\nStarting FedAvg simulation (flwr/ray): {args.rounds} rounds × "
           f"{len(client_ids)} clients")
 
-    state_keys = list(tmp_model.state_dict().keys())
-    global_state = OrderedDict(
-        (k, v.to(device).clone()) for k, v in tmp_model.state_dict().items())
-    weights = {cid: cache[cid]["n_train"] / total_windows for cid in client_ids}
-    per_client_losses: dict[int, dict[str, float]] = {}
     ckpt_dir = variant_dir / "checkpoints"
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-
-    dp_round = ({"clipping_norm": args.dp_clip, "delta": args.dp_delta,
-                 "sigma": sigma_map} if sigma_map else None)
+    state_keys = list(tmp_model.state_dict().keys())
+    audit_path = variant_dir / "audit_log.json"
+    task_cfg = {
+        "lr": args.lr, "batch_size": args.batch_size,
+        "local_epochs": args.local_epochs,
+        "dp_mode": ("none" if dp_info is None
+                    else ("uniform" if args.dp_noise is not None
+                          else "per_client")),
+        "dp_clip": args.dp_clip, "dp_delta": args.dp_delta,
+        "dp_sigma": (float(args.dp_noise) if args.dp_noise is not None
+                     else None),
+        "dp_target_epsilon": (float(args.dp_epsilon)
+                              if args.dp_epsilon is not None else None),
+    }
+    task = {
+        "name": f"baseline_{'dp' if dp_info else 'nodp'}",
+        "rounds": args.rounds, "round_timeout": None,
+        "checkpoint_dir": str(ckpt_dir),
+        "audit_path": str(audit_path),
+        "expected_clients": client_ids, "deliver_model": False,
+        "started_at": None, "cfg": task_cfg,
+    }
+    from fl_code.fed_core.server_core import build_server_app, make_client_fn
+    from flwr.client import ClientApp
+    from flwr.simulation import run_simulation
 
     t0 = time.perf_counter()
-    for r in range(1, args.rounds + 1):
-        global_state, losses = _fedavg_round(global_state, cache, weights,
-                                             args, device, dp_round, r)
-        per_client_losses[r] = losses
-        mean_loss = float(np.mean(list(losses.values())))
-        print(f"Round {r:3d}/{args.rounds}  train_loss={mean_loss:.6f}")
-        torch.save(OrderedDict((k, v.detach().cpu())
-                               for k, v in global_state.items()),
-                   ckpt_dir / f"round_{r:03d}.pt")
+    run_simulation(
+        server_app=build_server_app(task, state_keys),
+        client_app=ClientApp(client_fn=make_client_fn(
+            cache, client_ids, state_keys,
+            {"lr": args.lr, "batch_size": args.batch_size,
+             "local_epochs": args.local_epochs, "device": device})),
+        num_supernodes=len(client_ids),
+        backend_config={"client_resources": {"num_cpus": 2, "num_gpus": 0}},
+    )
     elapsed = time.perf_counter() - t0
+
+    with open(audit_path) as f:
+        audit = json.load(f)
+    per_client_losses = {row["round"]: row["client_losses"]
+                         for row in audit["rounds"]}
     print(f"Training complete in {elapsed:.0f}s")
     print(f"Saved {args.rounds} round checkpoints to {ckpt_dir}")
 
     # --- Load final aggregated model for eval ---
-    tmp_model.load_state_dict(
-        OrderedDict((k, v.detach().cpu()) for k, v in global_state.items()))
+    tmp_model.load_state_dict(torch.load(
+        ckpt_dir / f"round_{args.rounds:03d}.pt", weights_only=True))
 
     # --- Post-training evaluation ---
     print("\nEvaluating final model on all clients ...")
@@ -435,7 +343,7 @@ def main(args: argparse.Namespace):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Phase 2: FedAvg GlobalTCN Baseline Training "
-                    "(single-process FedAvg simulation)",
+                    "(flwr simulation, ray backend)",
     )
     parser.add_argument("--rounds", type=int, default=BASELINE_ROUNDS,
                         help=f"Communication rounds (default: {BASELINE_ROUNDS})")

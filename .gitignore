@@ -15,3 +15,8 @@ fl_code/outputs/
 superpowers/
 #pt模型
 *.pt
+
+#联邦学习输出产物（Phase 2/3 运行结果，不入库）
+fl_code/baseline_outputs/
+fl_code/personalized_outputs/
+app/runs/

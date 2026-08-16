@@ -130,13 +130,12 @@ class FedClient(NumPyClient):
         self.cache = cache
         self.state_keys = state_keys
         self.cfg = cfg
-        self.model = build_tcn(TCNConfig())
         self.budget_history: list[dict] = []
         self.budget_path: Path | None = cfg.get("budget_path")
         self._sigma_cache: float | None = None
 
     def get_parameters(self, config):
-        return state_dict_to_tensors(self.model.state_dict())
+        return state_dict_to_tensors(build_tcn(TCNConfig()).state_dict())
 
     def fit(self, parameters, config):
         dp = None
@@ -169,7 +168,12 @@ class FedClient(NumPyClient):
         round_cfg = {**self.cfg,
                      "round": int(config["server_round"]),
                      "rounds": int(config["rounds"])}
-        result = train_client(parameters, self.state_keys, self.model,
+        # Fresh model per round: a module used inside a torch.func
+        # vmap/grad transform can no longer pass Module._apply (model.to()),
+        # which train_client calls — reusing one model across rounds would
+        # crash DP round 2+ in long-lived clients (the App line).
+        model = build_tcn(TCNConfig())
+        result = train_client(parameters, self.state_keys, model,
                               self.cache["train_ds"], self.cache["n_train"],
                               round_cfg, dp)
         if result["eps"] is not None:

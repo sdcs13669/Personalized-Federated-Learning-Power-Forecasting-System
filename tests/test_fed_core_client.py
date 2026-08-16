@@ -65,14 +65,12 @@ def test_per_client_mode_caches_sigma(monkeypatch):
                                      "rounds": 2, "budget_path": None})
     common = {"dp_mode": "per_client", "dp_clip": 1.0, "dp_delta": 1e-5,
               "dp_target_epsilon": 7.5, "rounds": 2}
-    tensors = [v.detach().numpy()
-               for v in client.model.state_dict().values()]
+    tensors = client.get_parameters({})
+    # Same long-lived client across rounds (App line pattern): FedClient.fit
+    # builds a fresh model per round, so torch.func-marked modules never
+    # pass through Module._apply twice — this call sequence is the
+    # regression test for that crash.
     m1 = client.fit(tensors, {**common, "server_round": 1})[2]
-    # torch.func quirk (unrelated to caching): a module whose params were
-    # used inside vmap/grad cannot pass through Module._apply (`.to()`) a
-    # second time. Give the client a fresh model; the σ cache lives on the
-    # FedClient instance, so the caching behaviour under test is unchanged.
-    client.model = build_tcn(TCNConfig())
     m2 = client.fit(tensors, {**common, "server_round": 2})[2]
     # σ derived once, cached across rounds (not recomputed every round)
     assert len(calls) == 1

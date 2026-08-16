@@ -1,30 +1,154 @@
-"""Client-side training + DP (real implementation lands in Task 7).
-
-Frozen contract — the App line depends only on these signatures.
-"""
+"""Client-side training + DP-SGD + PLD accounting (flwr NumPyClient)."""
 from __future__ import annotations
+
+import json
+from collections import OrderedDict
+from pathlib import Path
+
+import numpy as np
+import torch
+from flwr.client import NumPyClient
+from torch.utils.data import DataLoader
+
+from fl_code.fed_core.accounting import dp_epsilon, sigma_for_epsilon
+from fl_code.fed_core.params import state_dict_to_tensors, tensors_to_state_dict
+from fl_code.models import TCNConfig, build_tcn
+from fl_code.train_eval_utils import train_epoch
+
+
+def _train_plain(model, train_ds, lr, batch_size, local_epochs, device) -> float:
+    # Parity with train_baseline._train_client: ONE DataLoader + ONE Adam
+    # optimizer created OUTSIDE the local_epochs loop (Adam state/momentum
+    # persists across epochs).
+    loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                        drop_last=False)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    loss = float("nan")
+    for _ in range(local_epochs):
+        loss = train_epoch(model, loader, optimizer, device)
+    return loss
+
+
+def _train_dp(model, train_ds, lr, batch_size, local_epochs, device,
+              noise_multiplier: float, clipping_norm: float) -> float:
+    from torch.func import functional_call, grad, vmap
+
+    params = dict(model.named_parameters())
+
+    def loss_fn(p, x, yy):
+        out = functional_call(model, p, (x.unsqueeze(0),))
+        return (out.squeeze(0) - yy).abs().mean()
+
+    per_sample_grad = vmap(grad(loss_fn, argnums=0), in_dims=(None, 0, 0),
+                           randomness="different")
+
+    # Parity with train_baseline._train_client_dp: the optimizer is created
+    # ONCE outside the epochs loop, while the DataLoader is recreated per
+    # epoch INSIDE the loop.
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    loss = float("nan")
+    for _ in range(local_epochs):
+        loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                            drop_last=False)
+        epoch_loss, n_samples = 0.0, 0
+        for X, y, *_ in loader:
+            X, y = X.to(device), y.to(device)
+            optimizer.zero_grad()
+            grads = per_sample_grad(params, X, y)
+            norms = torch.sqrt(sum(
+                g.double().pow(2).sum(dim=tuple(range(1, g.dim())))
+                for g in grads.values()))
+            scale = (clipping_norm / norms.clamp_min(1e-12)).clamp_max(1.0).float()
+            b = X.shape[0]
+            for name, p in model.named_parameters():
+                g = grads[name]
+                p.grad = (g * scale.view(b, *([1] * (g.dim() - 1)))).sum(0) / b
+                p.grad += torch.randn_like(p.grad) * (
+                    noise_multiplier * clipping_norm / b)
+            optimizer.step()
+            with torch.no_grad():
+                out = model(X)
+                epoch_loss += (out - y).abs().sum().item()
+                n_samples += b
+        loss = epoch_loss / n_samples
+    return loss
 
 
 def train_client(tensors: list, keys: list[str], model, train_ds, n_train: int,
                  cfg: dict, dp: dict | None) -> dict:
-    """Run one round of local (DP-)SGD from ``tensors`` (model mutated).
+    """One round of local training from ``tensors`` (model mutated in place)."""
+    state = tensors_to_state_dict(tensors, keys)
+    model.load_state_dict(state)
+    model.to(cfg["device"])
+    sigma: float | None = None
+    if dp is not None:
+        if dp["mode"] == "per_client":
+            sigma, _ = sigma_for_epsilon(
+                n_train, cfg["batch_size"], cfg["local_epochs"],
+                cfg["rounds"], dp["delta"], dp["target_epsilon"])
+        else:
+            sigma = float(dp["sigma"])
+        loss = _train_dp(model, train_ds, cfg["lr"], cfg["batch_size"],
+                         cfg["local_epochs"], cfg["device"], sigma,
+                         dp["clipping_norm"])
+    else:
+        loss = _train_plain(model, train_ds, cfg["lr"], cfg["batch_size"],
+                            cfg["local_epochs"], cfg["device"])
+    eps = None
+    if dp is not None:
+        eps = dp_epsilon(n_train, cfg["batch_size"], cfg["local_epochs"],
+                         cfg["round"], sigma, dp["delta"])
+    return {"tensors": state_dict_to_tensors(model.state_dict()),
+            "n_train": n_train, "eps": eps, "sigma": sigma, "loss": loss}
 
-    cfg: {"lr", "batch_size", "local_epochs", "device", "round",
-          "rounds", "budget_path": Path|None}
-    dp: None | {"noise_multiplier"|None, "clipping_norm", "delta",
-                "mode": "uniform"|"per_client", "sigma"|None,
-                "target_epsilon"|None}
-    Returns: {"tensors": list[np.ndarray], "n_train": int,
-              "eps": float|None, "sigma": float|None, "loss": float}
-    """
-    raise NotImplementedError("Task 7")
 
+class FedClient(NumPyClient):
+    """flwr client wrapping one participant's data + local DP training."""
 
-class FedClient:
-    """flwr NumPyClient wrapper (Task 7)."""
+    def __init__(self, cache: dict, state_keys: list[str], cfg: dict) -> None:
+        self.cache = cache
+        self.state_keys = state_keys
+        self.cfg = cfg
+        self.model = build_tcn(TCNConfig())
+        self.budget_history: list[dict] = []
+        self.budget_path: Path | None = cfg.get("budget_path")
 
-    def __init__(self, cache: dict, state_keys: list[str], cfg: dict):
-        raise NotImplementedError("Task 7")
+    def get_parameters(self, config):
+        return state_dict_to_tensors(self.model.state_dict())
 
-    def to_client(self):
-        raise NotImplementedError("Task 7")
+    def fit(self, parameters, config):
+        dp = None
+        if config.get("dp_mode") not in (None, "none", ""):
+            dp = {"mode": config["dp_mode"],
+                  "clipping_norm": float(config["dp_clip"]),
+                  "delta": float(config["dp_delta"]),
+                  "sigma": float(config.get("dp_sigma") or 0.0),
+                  "target_epsilon": float(config.get("dp_target_epsilon") or 0.0)}
+        round_cfg = {**self.cfg,
+                     "round": int(config["server_round"]),
+                     "rounds": int(config["rounds"])}
+        result = train_client(parameters, self.state_keys, self.model,
+                              self.cache["train_ds"], self.cache["n_train"],
+                              round_cfg, dp)
+        if result["eps"] is not None:
+            self.budget_history.append(
+                {"round": round_cfg["round"], "eps": result["eps"],
+                 "sigma": result["sigma"]})
+            self._write_budget()
+        return (result["tensors"], result["n_train"],
+                {"loss": float(result["loss"]),
+                 "eps": float(result["eps"] or 0.0)})
+
+    def evaluate(self, parameters, config):
+        if self.cfg.get("deliver_model") and self.budget_path is not None:
+            state = OrderedDict(
+                tensors_to_state_dict(parameters, self.state_keys))
+            torch.save(state, self.budget_path.parent / "final_model.pt")
+        return 0.0, self.cache["n_train"], {}
+
+    def _write_budget(self) -> None:
+        if self.budget_path is None:
+            return
+        self.budget_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.budget_path, "w") as f:
+            json.dump({"rounds": self.budget_history}, f, indent=2)

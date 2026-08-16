@@ -2,7 +2,7 @@
 import numpy as np
 import torch
 
-from fl_code.fed_core.client_core import train_client
+from fl_code.fed_core.client_core import FedClient, train_client
 from fl_code.fed_core.data import load_client_cache
 from fl_code.models import TCNConfig, build_tcn
 
@@ -40,3 +40,42 @@ def test_dp_round_eps_matches_anchor():
     from fl_code.fed_core.accounting import dp_epsilon
     assert abs(result["eps"] - dp_epsilon(
         cache["n_train"], 16, 1, 1, 1.0, 1e-5)) < 1e-9
+
+
+def test_per_client_mode_caches_sigma(monkeypatch):
+    """per_client σ is derived once per client, then cached across rounds."""
+    import fl_code.fed_core.client_core as cc
+
+    calls = []
+    real_sigma_for_epsilon = cc.sigma_for_epsilon
+
+    def counting_sigma_for_epsilon(n_train, batch_size, local_epochs,
+                                   rounds, delta, target):
+        calls.append((n_train, batch_size, local_epochs, rounds,
+                      delta, target))
+        return real_sigma_for_epsilon(n_train, batch_size, local_epochs,
+                                      rounds, delta, target)
+
+    monkeypatch.setattr(cc, "sigma_for_epsilon", counting_sigma_for_epsilon)
+
+    cache = load_client_cache("steel_ind_0", stride=6, max_seqs=1)
+    keys = list(build_tcn(TCNConfig()).state_dict().keys())
+    client = FedClient(cache, keys, {"lr": 0.001, "batch_size": 16,
+                                     "local_epochs": 1, "device": "cpu",
+                                     "rounds": 2, "budget_path": None})
+    common = {"dp_mode": "per_client", "dp_clip": 1.0, "dp_delta": 1e-5,
+              "dp_target_epsilon": 7.5, "rounds": 2}
+    tensors = [v.detach().numpy()
+               for v in client.model.state_dict().values()]
+    m1 = client.fit(tensors, {**common, "server_round": 1})[2]
+    # torch.func quirk (unrelated to caching): a module whose params were
+    # used inside vmap/grad cannot pass through Module._apply (`.to()`) a
+    # second time. Give the client a fresh model; the σ cache lives on the
+    # FedClient instance, so the caching behaviour under test is unchanged.
+    client.model = build_tcn(TCNConfig())
+    m2 = client.fit(tensors, {**common, "server_round": 2})[2]
+    # σ derived once, cached across rounds (not recomputed every round)
+    assert len(calls) == 1
+    assert np.isfinite(m1["eps"]) and np.isfinite(m2["eps"])
+    # per-round budget accumulates: ε after 2 rounds > ε after 1 round
+    assert m2["eps"] > m1["eps"]

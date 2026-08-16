@@ -33,7 +33,6 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
@@ -160,7 +159,6 @@ def main(args: argparse.Namespace):
     # exactly the target ε — big clients (small q = B/nᵢ) need far less
     # noise for the same budget than small ones.
     dp_info = None
-    sigma_map: dict[str, float] | None = None
     if args.dp_noise is not None or args.dp_epsilon is not None:
         dp_base = {
             "clipping_norm": args.dp_clip,
@@ -172,7 +170,6 @@ def main(args: argparse.Namespace):
             eps = _dp_epsilon_worst(client_sizes, args.batch_size,
                                     args.local_epochs, args.rounds,
                                     args.dp_noise, args.dp_delta)
-            sigma_map = {cid: args.dp_noise for cid in client_ids}
             dp_info = {**dp_base, "mode": "uniform",
                        "noise_multiplier": args.dp_noise,
                        "epsilon": round(eps, 4)}
@@ -182,7 +179,6 @@ def main(args: argparse.Namespace):
                   f"step; (ε={eps:.2f}, δ={args.dp_delta}) after "
                   f"{args.rounds} rounds")
         else:
-            sigma_map = {}
             per_client: dict[str, dict[str, float]] = {}
             print(f"Deriving per-client sigma for target eps={args.dp_epsilon} "
                   f"(delta={args.dp_delta}, PLD accounting) ...")
@@ -191,7 +187,6 @@ def main(args: argparse.Namespace):
                     cache[cid]["n_train"], args.batch_size,
                     args.local_epochs, args.rounds, args.dp_delta,
                     args.dp_epsilon)
-                sigma_map[cid] = sigma_i
                 per_client[cid] = {"sigma": round(sigma_i, 4),
                                    "epsilon": round(eps_i, 4)}
                 print(f"  {cid:<20s} n={cache[cid]['n_train']:>10,}  "

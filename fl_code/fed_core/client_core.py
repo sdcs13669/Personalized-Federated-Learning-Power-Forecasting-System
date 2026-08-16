@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import json
-from collections import OrderedDict
 from pathlib import Path
 
-import numpy as np
 import torch
 from flwr.client import NumPyClient
 from torch.utils.data import DataLoader
@@ -102,6 +100,29 @@ def train_client(tensors: list, keys: list[str], model, train_ds, n_train: int,
             "n_train": n_train, "eps": eps, "sigma": sigma, "loss": loss}
 
 
+class CidEchoClient(NumPyClient):
+    """Wraps a FedClient to echo its semantic client id in fit metrics.
+
+    In flwr 1.x the server-side proxy cid is an opaque (random) node id
+    in both simulation and the App line, so the strategy cannot map a
+    result back to its participant without the client's cooperation.
+    """
+
+    def __init__(self, inner: FedClient, cid: str) -> None:
+        self._inner = inner
+        self._cid = cid
+
+    def fit(self, parameters, config):
+        tensors, n_train, metrics = self._inner.fit(parameters, config)
+        return tensors, n_train, {**metrics, "cid": self._cid}
+
+    def evaluate(self, parameters, config):
+        return self._inner.evaluate(parameters, config)
+
+    def get_parameters(self, config):
+        return self._inner.get_parameters(config)
+
+
 class FedClient(NumPyClient):
     """flwr client wrapping one participant's data + local DP training."""
 
@@ -112,6 +133,7 @@ class FedClient(NumPyClient):
         self.model = build_tcn(TCNConfig())
         self.budget_history: list[dict] = []
         self.budget_path: Path | None = cfg.get("budget_path")
+        self._sigma_cache: float | None = None
 
     def get_parameters(self, config):
         return state_dict_to_tensors(self.model.state_dict())
@@ -119,11 +141,31 @@ class FedClient(NumPyClient):
     def fit(self, parameters, config):
         dp = None
         if config.get("dp_mode") not in (None, "none", ""):
-            dp = {"mode": config["dp_mode"],
-                  "clipping_norm": float(config["dp_clip"]),
-                  "delta": float(config["dp_delta"]),
-                  "sigma": float(config.get("dp_sigma") or 0.0),
-                  "target_epsilon": float(config.get("dp_target_epsilon") or 0.0)}
+            if config["dp_mode"] == "per_client":
+                # σ depends only on (n, batch, epochs, rounds, δ, ε) — all
+                # fixed for a run — so derive once and reuse across rounds
+                # instead of recomputing the PLD search every round.
+                if self._sigma_cache is None:
+                    sigma, _ = sigma_for_epsilon(
+                        self.cache["n_train"], self.cfg["batch_size"],
+                        self.cfg["local_epochs"], int(config["rounds"]),
+                        float(config["dp_delta"]),
+                        float(config["dp_target_epsilon"]))
+                    self._sigma_cache = float(sigma)
+                # Mathematically equivalent to per_client mode: train_client's
+                # ε/loss math does not depend on the mode field (the per_client
+                # branch is kept for direct callers).
+                dp = {"mode": "uniform",
+                      "clipping_norm": float(config["dp_clip"]),
+                      "delta": float(config["dp_delta"]),
+                      "sigma": self._sigma_cache,
+                      "target_epsilon": float(config["dp_target_epsilon"])}
+            else:
+                dp = {"mode": config["dp_mode"],
+                      "clipping_norm": float(config["dp_clip"]),
+                      "delta": float(config["dp_delta"]),
+                      "sigma": float(config.get("dp_sigma") or 0.0),
+                      "target_epsilon": float(config.get("dp_target_epsilon") or 0.0)}
         round_cfg = {**self.cfg,
                      "round": int(config["server_round"]),
                      "rounds": int(config["rounds"])}
@@ -135,14 +177,14 @@ class FedClient(NumPyClient):
                 {"round": round_cfg["round"], "eps": result["eps"],
                  "sigma": result["sigma"]})
             self._write_budget()
-        return (result["tensors"], result["n_train"],
-                {"loss": float(result["loss"]),
-                 "eps": float(result["eps"] or 0.0)})
+        metrics = {"loss": float(result["loss"])}
+        if result["eps"] is not None:
+            metrics["eps"] = float(result["eps"])
+        return (result["tensors"], result["n_train"], metrics)
 
     def evaluate(self, parameters, config):
         if self.cfg.get("deliver_model") and self.budget_path is not None:
-            state = OrderedDict(
-                tensors_to_state_dict(parameters, self.state_keys))
+            state = tensors_to_state_dict(parameters, self.state_keys)
             torch.save(state, self.budget_path.parent / "final_model.pt")
         return 0.0, self.cache["n_train"], {}
 

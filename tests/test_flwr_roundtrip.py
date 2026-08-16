@@ -1,10 +1,12 @@
 """Minimal flwr client-server roundtrip: proves the transport works."""
+import socket
 import threading
 import time
 
+import pytest
 import flwr.compat.server.app as compat_server_app
 from flwr.client import Client, NumPyClient, start_client
-from flwr.common import Code, FitIns, FitRes, Status, ndarrays_to_parameters, parameters_to_ndarrays
+from flwr.common import ndarrays_to_parameters
 from flwr.server import ServerConfig, start_server
 from flwr.server.strategy import FedAvg
 
@@ -19,7 +21,19 @@ class EchoClient(NumPyClient):
         return 0.0, 2, {}
 
 
-def test_roundtrip():
+def _wait_for_server(port: int, timeout: float = 15.0) -> None:
+    """Poll the server address until it accepts connections (ready)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return
+        except OSError:
+            time.sleep(0.2)
+    pytest.fail("server not ready")
+
+
+def test_roundtrip(monkeypatch):
     port = 8097
 
     # flwr 1.30's start_server() unconditionally registers SIGINT/SIGTERM
@@ -27,7 +41,9 @@ def test_roundtrip():
     # "ValueError: signal only works in main thread of the main interpreter"
     # when the server runs in a worker thread (as it does in this in-process
     # test). Disable that registration: it is irrelevant for a 1-round test.
-    compat_server_app.register_signal_handlers = lambda *args, **kwargs: None
+    # monkeypatch fixture undoes this after the test.
+    monkeypatch.setattr(compat_server_app, "register_signal_handlers",
+                        lambda *args, **kwargs: None)
 
     server_thread = threading.Thread(
         target=start_server,
@@ -44,10 +60,17 @@ def test_roundtrip():
         daemon=True,
     )
     server_thread.start()
-    time.sleep(3.0)
+    _wait_for_server(port)
 
     client: Client = EchoClient().to_client()
-    start_client(server_address=f"127.0.0.1:{port}", client=client)
+    client_thread = threading.Thread(
+        target=start_client,
+        kwargs={"server_address": f"127.0.0.1:{port}", "client": client},
+        daemon=True,
+    )
+    client_thread.start()
+    client_thread.join(timeout=60)
+    assert not client_thread.is_alive(), "client did not finish"
 
     server_thread.join(timeout=10)
     assert not server_thread.is_alive(), "server did not finish"

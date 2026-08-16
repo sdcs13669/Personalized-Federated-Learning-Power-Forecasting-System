@@ -2,17 +2,17 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
 import torch
-from flwr.client import NumPyClient
 from flwr.common import FitIns, ndarrays_to_parameters, parameters_to_ndarrays
 from flwr.server import ServerApp, ServerConfig
 from flwr.server.strategy import FedAvg
 
-from fl_code.fed_core.client_core import FedClient
+from fl_code.fed_core.client_core import CidEchoClient, FedClient
 from fl_code.fed_core.params import state_dict_to_tensors, tensors_to_state_dict
 from fl_code.models import TCNConfig, build_tcn
 
@@ -20,29 +20,6 @@ from fl_code.models import TCNConfig, build_tcn
 def initial_parameters(state_keys: list[str]):
     model = build_tcn(TCNConfig())
     return ndarrays_to_parameters(state_dict_to_tensors(model.state_dict()))
-
-
-class _CidEchoClient(NumPyClient):
-    """Wraps a FedClient to echo its semantic client id in fit metrics.
-
-    In flwr 1.x the server-side proxy cid is an opaque (random) node id
-    in both simulation and the App line, so the strategy cannot map a
-    result back to its participant without the client's cooperation.
-    """
-
-    def __init__(self, inner: FedClient, cid: str) -> None:
-        self._inner = inner
-        self._cid = cid
-
-    def fit(self, parameters, config):
-        tensors, n_train, metrics = self._inner.fit(parameters, config)
-        return tensors, n_train, {**metrics, "cid": self._cid}
-
-    def evaluate(self, parameters, config):
-        return self._inner.evaluate(parameters, config)
-
-    def get_parameters(self, config):
-        return self._inner.get_parameters(config)
 
 
 class AuditFedAvg(FedAvg):
@@ -69,12 +46,27 @@ class AuditFedAvg(FedAvg):
 
     def aggregate_fit(self, server_round, results, failures):
         params, _ = super().aggregate_fit(server_round, results, failures)
-        joined = []
+        arrived = set()
         client_losses = {}
         for proxy, res in results:
-            cid = str(res.metrics.get("cid") or proxy.cid)
-            joined.append(cid)
+            cid = res.metrics.get("cid")
+            if cid is None:
+                # No silent random-node-id fallback: a result without a
+                # semantic cid echo cannot be attributed to a participant,
+                # so it must not enter the audit (joined/loss).
+                logging.getLogger("flwr").warning(
+                    "proxy %s did not echo a semantic client cid; "
+                    "result excluded from audit round %d",
+                    proxy.cid, server_round)
+                continue
+            cid = str(cid)
+            arrived.add(cid)
             client_losses[cid] = float(res.metrics.get("loss", 0.0))
+        # Deterministic order (expected_clients) so audits diff cleanly
+        # across runs; unexpected cids are appended at the tail.
+        joined = [cid for cid in self.task["expected_clients"]
+                  if cid in arrived]
+        joined += [cid for cid in arrived if cid not in joined]
         dropped = [cid for cid in self.task["expected_clients"]
                    if cid not in joined]
         row = {
@@ -118,10 +110,6 @@ def build_strategy(task: dict, state_keys: list[str], on_round_done=None):
         min_fit_clients=1, min_evaluate_clients=1, min_available_clients=1,
         accept_failures=True,
         initial_parameters=initial_parameters(state_keys),
-        fit_metrics_aggregation_fn=(
-            lambda metrics: {"loss": float(sum(m[1].get("loss", 0.0) * m[0]
-                                               for m in metrics)
-                                           / max(sum(m[0] for m in metrics), 1))}),
     )
 
 
@@ -138,7 +126,7 @@ def make_client_fn(caches: dict, client_ids: list[str],
     def client_fn(context):
         i = int(context.node_config["partition-id"])
         cid = client_ids[i]
-        return _CidEchoClient(FedClient(caches[cid], state_keys,
-                                        {**cfg, "budget_path": None}),
-                              cid).to_client()
+        return CidEchoClient(FedClient(caches[cid], state_keys,
+                                       {**cfg, "budget_path": None}),
+                             cid).to_client()
     return client_fn

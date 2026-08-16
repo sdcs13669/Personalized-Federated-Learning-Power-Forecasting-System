@@ -3,11 +3,12 @@
 Workflow:
   1. pick a client (from ``client_config.yaml``)
   2. pick one or more load sequences
-  3. pick a model — Phase 2 checkpoints are auto-discovered under the
-     baseline root (default fl_code/baseline_outputs), scanning both the
-     non-DP (nodp/) and DP (dp/) sub-directories:
-       - Global TCN only (Phase 2, no DP / DP)
-       - Global + Corrector (Phase 3)
+  3. pick a model — exactly three options, auto-discovered under the
+     baseline root (default fl_code/baseline_outputs):
+       - nodp   : Global TCN only (Phase 2, non-DP)
+       - dp     : Global TCN only (Phase 2, DP)
+       - dp+rc  : DP Global TCN + Corrector (Phase 3; shown when a
+                  Corrector checkpoint exists for the client)
   4. rolling forecast; predictions are **de-normalised** back to physical
      units and plotted against the actuals for the first 7 days of the test
      split (with Corrector: P10/P50/P90 curves + 80% CI band)
@@ -52,7 +53,7 @@ PERSONALIZED_DIR = ROOT / "fl_code" / "personalized_outputs"
 # ---------------------------------------------------------------------------
 
 def _metrics(actuals: np.ndarray, preds: np.ndarray) -> dict | None:
-    """MAE / MSE / RMSE / R² on valid (non-NaN) pairs, in raw units."""
+    """MAE / MSE / RMSE / R² / WAPE on valid (non-NaN) pairs, in raw units."""
     valid = ~np.isnan(actuals) & ~np.isnan(preds)
     a, p = actuals[valid], preds[valid]
     if len(a) == 0:
@@ -63,7 +64,9 @@ def _metrics(actuals: np.ndarray, preds: np.ndarray) -> dict | None:
     ss_res = float(np.sum((a - p) ** 2))
     ss_tot = float(np.sum((a - a.mean()) ** 2))
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
-    return {"mae": mae, "mse": mse, "rmse": rmse, "r2": r2}
+    denom = float(np.sum(np.abs(a)))
+    wape = float(np.sum(np.abs(p - a)) / denom) if denom > 0 else float("nan")
+    return {"mae": mae, "mse": mse, "rmse": rmse, "r2": r2, "wape": wape}
 
 
 # ---------------------------------------------------------------------------
@@ -211,25 +214,27 @@ class EvalVisualizer:
 
     def _detect_models(self, cid: str, root: Path
                        ) -> list[tuple[str, Path, Path | None]]:
-        """Auto-discover global models under ``root`` (nodp/ and dp/).
+        """Auto-discover the three fixed model options under ``root``.
 
-        Returns ``[(label, global_ckpt, corrector_path_or_None)]``.  A
-        ``+ Corrector (Phase 3)`` entry is added per variant when
-        ``personalized_outputs/corrector_{cid}.pt`` exists.
+        Returns ``[(label, global_ckpt, corrector_path_or_None)]``:
+        ``nodp`` / ``dp`` (latest checkpoint per variant) and ``dp+rc``
+        (DP model + Corrector, only when ``corrector_{cid}.pt`` exists).
         """
-        options: list[tuple[str, Path, Path | None]] = []
-        for sub, tag in (("nodp", "no DP"), ("dp", "DP")):
+        def latest(sub: str) -> Path | None:
             ckpts = sorted((root / sub / "checkpoints").glob("round_*.pt"),
                            key=lambda p: int(p.stem.split("_")[-1]))
-            if not ckpts:
-                continue
-            ckpt = ckpts[-1]
-            options.append((f"Global TCN (Phase 2, {tag})", ckpt, None))
-            corr = PERSONALIZED_DIR / f"corrector_{cid}.pt"
-            if corr.exists():
-                options.append(
-                    (f"Global TCN (Phase 2, {tag}) + Corrector (Phase 3)",
-                     ckpt, corr))
+            return ckpts[-1] if ckpts else None
+
+        options: list[tuple[str, Path, Path | None]] = []
+        nodp_ckpt = latest("nodp")
+        dp_ckpt = latest("dp")
+        if nodp_ckpt is not None:
+            options.append(("nodp", nodp_ckpt, None))
+        if dp_ckpt is not None:
+            options.append(("dp", dp_ckpt, None))
+        corr = PERSONALIZED_DIR / f"corrector_{cid}.pt"
+        if dp_ckpt is not None and corr.exists():
+            options.append(("dp+rc", dp_ckpt, corr))
         return options
 
     def _scan_models(self) -> list[str]:
@@ -393,7 +398,8 @@ class EvalVisualizer:
 
             m = _metrics(actuals, p50)
             metrics_txt = (f"MAE={m['mae']:.2f}  RMSE={m['rmse']:.2f}  "
-                           f"MSE={m['mse']:.1f}  R²={m['r2']:.4f}" if m
+                           f"MSE={m['mse']:.1f}  R²={m['r2']:.4f}  "
+                           f"WAPE={m['wape']:.3f}" if m
                            else "no valid data")
             ax.set_title(f"{seq}  (test starts {start_dt})\n{metrics_txt}",
                          fontsize=10)

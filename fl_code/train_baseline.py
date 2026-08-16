@@ -280,7 +280,12 @@ def main(args: argparse.Namespace):
             {"lr": args.lr, "batch_size": args.batch_size,
              "local_epochs": args.local_epochs, "device": device})),
         num_supernodes=len(client_ids),
-        backend_config={"client_resources": {"num_cpus": 2, "num_gpus": 0}},
+        backend_config={
+            "client_resources": (
+                {"num_cpus": 2, "num_gpus": 0.5}
+                if device == "cuda"
+                else {"num_cpus": 2, "num_gpus": 0})
+        },
     )
     elapsed = time.perf_counter() - t0
 

@@ -32,7 +32,10 @@ class AuditFedAvg(FedAvg):
         self.state_keys = state_keys
         self.on_round_done = on_round_done
         self.audit_rows: list[dict] = []
-        Path(task["checkpoint_dir"]).mkdir(parents=True, exist_ok=True)
+        self._last_parameters = None
+        ckpt_dir = task.get("checkpoint_dir")
+        if ckpt_dir:
+            Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
 
     def configure_fit(self, server_round, parameters, client_manager):
         cfg = {**self.task["cfg"],
@@ -82,16 +85,22 @@ class AuditFedAvg(FedAvg):
         self.audit_rows.append(row)
         self._write_audit()
         if params is not None:
-            state = OrderedDict(tensors_to_state_dict(
-                parameters_to_ndarrays(params), self.state_keys))
-            torch.save(state, Path(self.task["checkpoint_dir"])
-                       / f"round_{server_round:03d}.pt")
+            self._last_parameters = parameters_to_ndarrays(params)
+            ckpt_dir = self.task.get("checkpoint_dir")
+            if ckpt_dir:
+                state = OrderedDict(tensors_to_state_dict(
+                    self._last_parameters, self.state_keys))
+                torch.save(state, Path(ckpt_dir)
+                           / f"round_{server_round:03d}.pt")
         if self.on_round_done is not None:
             self.on_round_done(row)
         return params, {}
 
     def _write_audit(self) -> None:
-        path = Path(self.task["audit_path"])
+        audit_path = self.task.get("audit_path")
+        if not audit_path:
+            return
+        path = Path(audit_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump({"task": {"name": self.task["name"],

@@ -14,7 +14,7 @@ services:
       - FL_SERVER_HOST=0.0.0.0
       - FL_GRPC_PORT=8089
       - FL_REST_PORT=8000
-      - JWT_SECRET=change-me-in-production
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
       - DB_PATH=/app/data/fl_server.db
     restart: unless-stopped
 

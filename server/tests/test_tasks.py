@@ -108,3 +108,21 @@ def test_cancel_not_creator():
 
     resp = client.post(f"/api/tasks/{task_id}/cancel", headers=_auth(token_b))
     assert resp.status_code == 403
+
+
+def test_key_not_leaked_in_list_or_detail():
+    """The plaintext key must only appear in the create response."""
+    token = _register()
+    create_resp = client.post("/api/tasks", json={
+        "name": "leak_test", "rounds": 1}, headers=_auth(token))
+    task_id = create_resp.json()["id"]
+    assert "key" in create_resp.json()  # key IS in create response
+
+    # List should not contain key
+    list_resp = client.get("/api/tasks", headers=_auth(token))
+    for task in list_resp.json():
+        assert "key" not in task
+
+    # Detail should not contain key
+    detail_resp = client.get(f"/api/tasks/{task_id}", headers=_auth(token))
+    assert "key" not in detail_resp.json()

@@ -1,6 +1,7 @@
 """Join task with key validation + list participants."""
 from __future__ import annotations
 
+import hmac
 import os
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -35,7 +36,7 @@ def join_task(
     if task.status != "recruiting":
         raise HTTPException(status_code=400,
                             detail="Task is not accepting participants")
-    if req.key_hash != task.key_hash:
+    if not hmac.compare_digest(req.key_hash, task.key_hash or ""):
         raise HTTPException(status_code=403, detail="Invalid key")
 
     existing = db.query(Participant).filter(

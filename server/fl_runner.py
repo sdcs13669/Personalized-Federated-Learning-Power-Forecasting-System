@@ -52,6 +52,15 @@ def start_training(task_dict: dict, participants: list[dict],
                    db_session_factory) -> None:
     """Start flwr server in a background thread. Non-blocking."""
     task_id = task_dict["id"]
+
+    # Guard against port collision (demo: only one concurrent training task)
+    for tid, active in _active_tasks.items():
+        if active.thread is not None and active.thread.is_alive():
+            raise RuntimeError(
+                f"Task {tid} is already training. "
+                f"Only one concurrent task supported (gRPC port collision)."
+            )
+
     stop_event = threading.Event()
     active = ActiveTask(task_id=task_id, stop_event=stop_event)
     _active_tasks[task_id] = active
@@ -166,3 +175,18 @@ def _run_flwr_server(task_dict: dict, participants: list[dict],
 
     logger.info("flwr server finished for task %d (status: %s)",
                 active.task_id, "failed" if server_error else "completed")
+
+    # NOTE: We intentionally keep the _active_tasks entry so that
+    # get_final_model() can serve the trained model bytes.
+    # In production, implement cleanup_completed_tasks() with TTL.
+
+
+def cleanup_completed_tasks(max_age_hours: int = 24) -> int:
+    """Remove completed tasks older than max_age_hours.
+
+    Returns count of tasks removed.  For the current demo we keep all
+    completed tasks so that ``get_final_model()`` continues to work.
+    A production deployment would implement TTL-based cleanup here.
+    """
+    # Demo stub — no cleanup performed
+    return 0

@@ -54,6 +54,17 @@ def test_audit_empty():
     assert resp.json() == []
 
 
+def test_audit_forbidden_for_non_participant():
+    creator_token = _register("creator")
+    create_resp = client.post("/api/tasks", json={
+        "name": "t", "rounds": 1}, headers=_auth(creator_token))
+    task_id = create_resp.json()["id"]
+    # A different user who is neither creator nor participant
+    other_token = _register("other")
+    resp = client.get(f"/api/tasks/{task_id}/audit", headers=_auth(other_token))
+    assert resp.status_code == 403
+
+
 def test_model_not_ready():
     token = _register()
     create_resp = client.post("/api/tasks", json={

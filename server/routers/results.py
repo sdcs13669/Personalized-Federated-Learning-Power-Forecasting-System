@@ -70,6 +70,15 @@ def get_audit(
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+
+    # Check user is a participant or the creator
+    is_participant = db.query(Participant).filter(
+        Participant.task_id == task_id,
+        Participant.user_id == user.id,
+    ).first()
+    if not is_participant and task.creator_id != user.id:
+        raise HTTPException(status_code=403, detail="Not a participant")
+
     rounds = db.query(AuditRound).filter(
         AuditRound.task_id == task_id
     ).order_by(AuditRound.round).all()

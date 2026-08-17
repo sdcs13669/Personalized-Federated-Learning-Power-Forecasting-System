@@ -18,11 +18,10 @@ from torch.func import functional_call, grad, vmap
 def _loss_fn_dp(p, x, yy, m):
     """Stateless loss for DP per-sample grad.
 
-    ``model`` is passed as an argument (in_dims=None) instead of being
-    captured in a closure, so that ``vmap``'s internal function cache
-    doesn't accumulate one entry per round (each holding a strong ref
-    to a past model instance — the cross-round GPU memory leak observed
-    on the 64ch GlobalTCN DP path).
+    ``model`` is passed as an argument (in_dims=None) so the closure
+    holds no module reference. The cross-round leak is governed by the
+    params-dict identity cache in vmap (see ``_get_fp_params``), not by
+    this closure.
     """
     out = functional_call(m, p, (x.unsqueeze(0),))
     return (out.squeeze(0) - yy).abs().mean()
@@ -31,6 +30,26 @@ def _loss_fn_dp(p, x, yy, m):
 _per_sample_grad_dp = vmap(grad(_loss_fn_dp, argnums=0),
                            in_dims=(None, 0, 0, None),
                            randomness="different")
+
+# torch.func.vmap caches the backward graph keyed on the params dict's
+# tensor identity. FedClient.fit builds a fresh model every round, so a
+# fresh params dict would create a fresh cache entry every round that
+# gc.collect() cannot reclaim (measured ~18 MB/round on the 64ch TCN).
+# Keep ONE persistent container and copy current weights into it before
+# each vmap call; the cache is then built exactly once per process.
+_fp_params: dict[str, torch.Tensor] | None = None
+
+
+def _get_fp_params(model) -> dict[str, torch.Tensor]:
+    """Return the process-wide persistent container synced to ``model``."""
+    global _fp_params
+    if _fp_params is None:
+        _fp_params = {n: torch.empty_like(p, device=p.device)
+                      for n, p in model.named_parameters()}
+    with torch.no_grad():
+        for n, p in model.named_parameters():
+            _fp_params[n].copy_(p)
+    return _fp_params
 
 
 def _train_plain(model, train_ds, lr, batch_size, local_epochs, device) -> float:
@@ -48,7 +67,9 @@ def _train_plain(model, train_ds, lr, batch_size, local_epochs, device) -> float
 
 def _train_dp(model, train_ds, lr, batch_size, local_epochs, device,
               noise_multiplier: float, clipping_norm: float) -> float:
-    params = dict(model.named_parameters())
+    # One process-wide params container so vmap's per-dict graph cache is
+    # created once; synced to the model's current weights before each call.
+    params = _get_fp_params(model)
 
     # Parity with train_baseline._train_client_dp: the optimizer is created
     # ONCE outside the epochs loop, while the DataLoader is recreated per
@@ -61,10 +82,12 @@ def _train_dp(model, train_ds, lr, batch_size, local_epochs, device,
         epoch_loss, n_samples = 0.0, 0
         for X, y, *_ in loader:
             X, y = X.to(device), y.to(device)
+            params = _get_fp_params(model)  # sync container after optimizer.step
             optimizer.zero_grad()
             grads = _per_sample_grad_dp(params, X, y, model)
+            # .detach(): the fp64 copies must not keep the vmap graph alive
             norms = torch.sqrt(sum(
-                g.double().pow(2).sum(dim=tuple(range(1, g.dim())))
+                g.detach().double().pow(2).sum(dim=tuple(range(1, g.dim())))
                 for g in grads.values()))
             scale = (clipping_norm / norms.clamp_min(1e-12)).clamp_max(1.0).float()
             b = X.shape[0]
@@ -79,12 +102,9 @@ def _train_dp(model, train_ds, lr, batch_size, local_epochs, device,
                 epoch_loss += (out - y).abs().sum().item()
                 n_samples += b
         loss = epoch_loss / n_samples
-    # Break lingering refs from the last batch's autograd graph and return
-    # CUDA segments to the allocator so the next round starts with a
-    # clean slate (safety net on top of the module-level vmap cache fix).
-    # Note: grads is a local that goes out of scope naturally; we only
-    # explicitly del params/optimizer which are always defined.
-    del params, optimizer
+    # Return CUDA segments to the allocator so the next round starts with a
+    # clean slate (the container itself is kept for the process lifetime).
+    del optimizer
     import gc; gc.collect()
     torch.cuda.empty_cache()
     return loss

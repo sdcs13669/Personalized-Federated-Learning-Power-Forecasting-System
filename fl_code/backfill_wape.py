@@ -1,17 +1,23 @@
-"""Backfill WAPE into an existing personalized_results.json without retraining.
+"""Re-evaluate the models recorded in personalized_results.json and refresh
+all evaluation metrics in place — no retraining.
 
 Re-loads the frozen Global TCN and each client's Corrector checkpoint
 recorded in the JSON, re-runs the exact rolling-forecast evaluation of
-train_personalized, and writes per-client + aggregate WAPE back into the
-JSON in place:
+train_personalized, and overwrites per-client + aggregate metrics so the
+whole file comes from a single evaluation pass:
 
-  - ``results[cid].wape_baseline`` / ``wape_personalized``
-  - ``final_metrics.wape_baseline`` / ``wape_personalized``
+  - ``results[cid]``: mae / rmse / r2 / wape (baseline + personalized),
+    improvement_mae_pct
+  - ``final_metrics``: avg_mae_baseline / avg_mae_personalized /
+    avg_improvement_mae_pct / wape_baseline / wape_personalized /
+    client_metrics
 
-The JSON is only overwritten after every client evaluates successfully.
-Model / Corrector paths come from the JSON itself; when the recorded
-``output_dir`` does not exist on this machine (JSON copied from the
-server), Corrector checkpoints fall back to the JSON file's own directory.
+Use it to add WAPE to older Phase 3 outputs, or to refresh stale eval
+numbers against the current local data. The JSON is only overwritten after
+every client evaluates successfully. Model / Corrector paths come from the
+JSON itself; when the recorded ``output_dir`` does not exist on this
+machine (JSON copied from the server), Corrector checkpoints fall back to
+the JSON file's own directory.
 
 Usage::
 
@@ -81,23 +87,52 @@ def backfill(results: dict, json_path: Path, device: str) -> dict:
             global_model, corrector, data["df_norm"], seqs,
             data["public_cols"], data["local_cols"], stride, device)
 
-        stored = r.get("mae_personalized")
-        if stored is not None and abs(stored - m_pers["mae"]) > 1e-4:
-            print(f"  WARNING {cid}: recomputed mae_personalized "
-                  f"{m_pers['mae']:.4f} != stored {stored:.4f}")
-
+        # 同一评估的 mae/rmse/r2/wape 一起覆盖，保证 JSON 内指标自洽
+        r["mae_baseline"] = m_base["mae"]
+        r["rmse_baseline"] = m_base["rmse"]
+        r["r2_baseline"] = m_base["r2"]
+        r["mae_personalized"] = m_pers["mae"]
+        r["rmse_personalized"] = m_pers["rmse"]
+        r["r2_personalized"] = m_pers["r2"]
+        gain = None
+        if not np.isnan(m_base["mae"]) and not np.isnan(m_pers["mae"]):
+            gain = (m_base["mae"] - m_pers["mae"]) / m_base["mae"] * 100
+        r["improvement_mae_pct"] = round(gain, 2) if gain is not None else None
         r["wape_baseline"] = m_base["wape"]
         r["wape_personalized"] = m_pers["wape"]
         wape_base_num += sums[0]
         wape_pers_num += sums[1]
         wape_denom += sums[2]
-        print(f"  {cid:<20s} wape_base={m_base['wape']:.4f}  "
-              f"wape_pers={m_pers['wape']:.4f}")
+        print(f"  {cid:<20s} mae_pers={m_pers['mae']:.4f}  "
+              f"wape_base={m_base['wape']:.4f}  wape_pers={m_pers['wape']:.4f}")
 
-    results["final_metrics"]["wape_baseline"] = (
-        float(wape_base_num / wape_denom) if wape_denom > 0 else float("nan"))
-    results["final_metrics"]["wape_personalized"] = (
-        float(wape_pers_num / wape_denom) if wape_denom > 0 else float("nan"))
+    # 重建聚合指标（与 train_personalized 相同的口径）
+    valid_base = [r["mae_baseline"] for r in results["results"].values()
+                  if not np.isnan(r["mae_baseline"])]
+    valid_pers = [r["mae_personalized"] for r in results["results"].values()
+                  if not np.isnan(r["mae_personalized"])]
+    gains = [r["improvement_mae_pct"] for r in results["results"].values()
+             if r["improvement_mae_pct"] is not None]
+    client_metrics = {
+        cid: {"mae": r["mae_personalized"],
+              "rmse": r["rmse_personalized"],
+              "r2": r["r2_personalized"],
+              "n_train": r["n_windows"]}
+        for cid, r in results["results"].items()
+    }
+    results["final_metrics"] = {
+        "avg_mae_baseline": (float(np.mean(valid_base))
+                             if valid_base else float("nan")),
+        "avg_mae_personalized": (float(np.mean(valid_pers))
+                                 if valid_pers else float("nan")),
+        "avg_improvement_mae_pct": (round(float(np.mean(gains)), 2)
+                                    if gains else None),
+        "wape_baseline": (float(wape_base_num / wape_denom)
+                          if wape_denom > 0 else float("nan")),
+        "wape_personalized": (float(wape_pers_num / wape_denom)
+                              if wape_denom > 0 else float("nan")),
+        "client_metrics": client_metrics,
+    }
     return results
 
 
@@ -123,8 +158,8 @@ def main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Backfill WAPE into personalized_results.json using the "
-                    "already-trained models (no retraining)")
+        description="Re-evaluate trained models and refresh all eval metrics "
+                    "in personalized_results.json (no retraining)")
     parser.add_argument("--json", type=str, default=str(DEFAULT_JSON),
                         help=f"Path to personalized_results.json "
                              f"(default: {DEFAULT_JSON})")

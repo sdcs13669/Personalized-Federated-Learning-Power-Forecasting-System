@@ -281,8 +281,10 @@ def main(args: argparse.Namespace):
              "local_epochs": args.local_epochs, "device": device})),
         num_supernodes=len(client_ids),
         backend_config={
+            # num_gpus=1.0：DP 的 vmap per-sample-grad 训练单进程即可占满
+            # 显存，0.5（两 actor 共卡）在 64ch GlobalTCN 下必然 OOM
             "client_resources": (
-                {"num_cpus": 2, "num_gpus": 0.5}
+                {"num_cpus": 2, "num_gpus": 1.0}
                 if device == "cuda"
                 else {"num_cpus": 2, "num_gpus": 0})
         },

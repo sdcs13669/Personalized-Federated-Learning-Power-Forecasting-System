@@ -7,18 +7,19 @@
     "input_steps": 144,
     "pred_len": 6,
     "num_channels": [
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32
+      64,
+      64,
+      64,
+      64,
+      64,
+      64,
+      64
     ],
     "kernel_size": 2,
     "dropout": 0.2,
+    "head_hidden": 32,
     "receptive_field": 255,
-    "n_params": 28806
+    "n_params": 112742
   },
   "window_geometry": {
     "input_steps": 144,

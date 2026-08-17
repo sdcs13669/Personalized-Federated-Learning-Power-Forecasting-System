@@ -171,14 +171,16 @@ def _train_corrector_epoch(corrector, loader, optimizer, device):
 # ---------------------------------------------------------------------------
 
 def _metrics(preds: np.ndarray, actuals: np.ndarray) -> dict:
-    """MAE / RMSE / R² in normalised space (same as train_eval_utils.evaluate)."""
+    """MAE / RMSE / R² / WAPE in normalised space (same as train_eval_utils.evaluate)."""
     mae = float(np.mean(np.abs(preds - actuals)))
     mse = float(np.mean((preds - actuals) ** 2))
     rmse = float(np.sqrt(mse))
     ss_res = float(np.sum((actuals - preds) ** 2))
     ss_tot = float(np.sum((actuals - actuals.mean()) ** 2))
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
-    return {"mae": mae, "rmse": rmse, "r2": r2}
+    denom = float(np.sum(np.abs(actuals)))
+    wape = float(np.sum(np.abs(preds - actuals)) / denom) if denom > 0 else float("nan")
+    return {"mae": mae, "rmse": rmse, "r2": r2, "wape": wape}
 
 
 @torch.no_grad()
@@ -186,8 +188,9 @@ def _evaluate_personalized(global_model, corrector, df_norm, seqs,
                            public_cols, local_cols, stride, device):
     """Rolling-forecast eval: Global TCN + Corrector → Y_final.
 
-    Returns two metric dicts (mae/rmse/r2) for the Global TCN P50 vs
-    Corrector P50, computed in normalised space (before de-normalisation).
+    Returns two metric dicts (mae/rmse/r2/wape) for the Global TCN P50 vs
+    Corrector P50, computed in normalised space (before de-normalisation),
+    plus WAPE numerator/denominator components for cross-client aggregation.
     """
     pub_arr = df_norm[public_cols].values.astype(np.float32)
     loc_arr = df_norm[local_cols].values.astype(np.float32) if local_cols else None
@@ -241,8 +244,9 @@ def _evaluate_personalized(global_model, corrector, df_norm, seqs,
             pos += stride
 
     if not all_actuals:
-        nan_m = {"mae": float("nan"), "rmse": float("nan"), "r2": float("nan")}
-        return nan_m, nan_m
+        nan_m = {"mae": float("nan"), "rmse": float("nan"),
+                 "r2": float("nan"), "wape": float("nan")}
+        return nan_m, nan_m, (0.0, 0.0, 0.0)
 
     actuals = np.concatenate(all_actuals)
     valid = ~np.isnan(actuals)
@@ -251,7 +255,12 @@ def _evaluate_personalized(global_model, corrector, df_norm, seqs,
     corr_preds = np.concatenate(all_preds_corr)[valid]  # (T, 3)
     actuals = actuals[valid]
 
-    return _metrics(base_preds, actuals), _metrics(corr_preds[:, 1], actuals)
+    # WAPE 分子/分母分量，供跨客户端全局聚合（Σ|p-a| / Σ|a|）
+    sums = (float(np.sum(np.abs(base_preds - actuals))),
+            float(np.sum(np.abs(corr_preds[:, 1] - actuals))),
+            float(np.sum(np.abs(actuals))))
+    return (_metrics(base_preds, actuals),
+            _metrics(corr_preds[:, 1], actuals), sums)
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +397,7 @@ def main(args: argparse.Namespace):
     # --- Per-client training ---
     all_results: dict[str, dict] = {}
     t_total0 = time.perf_counter()
+    wape_base_num = wape_pers_num = wape_denom = 0.0
 
     for cid in client_ids:
         print(f"\n{'='*60}")
@@ -455,11 +465,14 @@ def main(args: argparse.Namespace):
         if args.eval_seqs and len(eval_seqs) > args.eval_seqs:
             eval_seqs = eval_seqs[:args.eval_seqs]
 
-        m_base, m_pers = _evaluate_personalized(
+        m_base, m_pers, wape_sums = _evaluate_personalized(
             global_tcn, corrector, data["df_norm"],
             eval_seqs, data["public_cols"], data["local_cols"],
             args.stride, device,
         )
+        wape_base_num += wape_sums[0]
+        wape_pers_num += wape_sums[1]
+        wape_denom += wape_sums[2]
         eval_time = time.perf_counter() - t0
         mae_base, mae_corr = m_base["mae"], m_pers["mae"]
         print(f"  Eval: {eval_time:.1f}s")
@@ -482,6 +495,8 @@ def main(args: argparse.Namespace):
             "mae_personalized": m_pers["mae"],
             "rmse_personalized": m_pers["rmse"],
             "r2_personalized": m_pers["r2"],
+            "wape_baseline": m_base["wape"],
+            "wape_personalized": m_pers["wape"],
             "improvement_mae_pct": round(gain, 2) if gain is not None else None,
             "n_windows": n_windows,
             "n_seqs": n_seqs,
@@ -519,6 +534,10 @@ def main(args: argparse.Namespace):
         "avg_mae_personalized": avg_pers,
         "avg_improvement_mae_pct": (round(avg_gain, 2)
                                     if not np.isnan(avg_gain) else None),
+        "wape_baseline": (float(wape_base_num / wape_denom)
+                          if wape_denom > 0 else float("nan")),
+        "wape_personalized": (float(wape_pers_num / wape_denom)
+                              if wape_denom > 0 else float("nan")),
         "client_metrics": client_metrics,
     }
 

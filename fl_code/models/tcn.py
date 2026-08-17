@@ -64,11 +64,12 @@ class TemporalConvNet(nn.Module):
 
 
 class TCN(nn.Module):
-    """TCN with output head: encoder -> last time step -> Linear.
+    """TCN with FFN output head: encoder -> last time step -> FFN.
 
     Canonical architecture from Bai et al. (2018).  Maps a full-length
     input sequence to a fixed-size output via the last time step's
-    representation.
+    representation, then a small FFN (Linear + LeakyReLU + Linear) projects
+    it to the output dimension.
 
     Parameters
     ----------
@@ -83,18 +84,27 @@ class TCN(nn.Module):
         Conv kernel size (paper default: 2).
     dropout : float
         Dropout rate in TCN blocks.
+    head_hidden : int
+        FFN head hidden size ``[num_channels[-1], head_hidden, output_size]``.
     """
 
-    def __init__(self, input_size, output_size, num_channels, kernel_size=2, dropout=0.2):
+    def __init__(self, input_size, output_size, num_channels, kernel_size=2,
+                 dropout=0.2, head_hidden=32):
         super(TCN, self).__init__()
         self.tcn = TemporalConvNet(input_size, num_channels, kernel_size, dropout)
-        self.linear = nn.Linear(num_channels[-1], output_size)
+        self.head = nn.Sequential(
+            nn.Linear(num_channels[-1], head_hidden),
+            nn.LeakyReLU(),
+            nn.Linear(head_hidden, output_size),
+        )
         self.init_weights()
 
     def init_weights(self):
-        self.linear.weight.data.normal_(0, 0.01)
+        for m in self.head.modules():
+            if isinstance(m, nn.Linear):
+                m.weight.data.normal_(0, 0.01)
 
     def forward(self, x):
         # x: (B, input_size, L)
-        y1 = self.tcn(x)                    # (B, num_channels[-1], L)
-        return self.linear(y1[:, :, -1])    # (B, output_size)
+        y1 = self.tcn(x)                # (B, num_channels[-1], L)
+        return self.head(y1[:, :, -1])  # (B, output_size)

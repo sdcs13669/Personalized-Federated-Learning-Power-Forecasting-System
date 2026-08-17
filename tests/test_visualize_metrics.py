@@ -35,11 +35,13 @@ def test_model_menu_three_kinds(tmp_path, monkeypatch):
     _make_ckpt(tmp_path, "nodp")
     _make_ckpt(tmp_path, "dp")
     pers = tmp_path / "pers"
-    pers.mkdir()
-    torch.save({"w": torch.zeros(1)}, pers / "corrector_steel_ind_0.pt")
+    (pers / "mlp").mkdir(parents=True)
+    torch.save({"w": torch.zeros(1)},
+               pers / "mlp" / "corrector_steel_ind_0.pt")
     monkeypatch.setattr(ve, "PERSONALIZED_DIR", pers)
-    opts = ve.EvalVisualizer._detect_models(None, "steel_ind_0", tmp_path)
-    assert [label for label, _, _ in opts] == ["nodp", "dp", "dp+rc"]
+    det = ve.EvalVisualizer._detect_models(None, "steel_ind_0", tmp_path)
+    assert det["nodp"] is not None and det["dp"] is not None
+    assert det["dp+rc"] == {"mlp": pers / "mlp" / "corrector_steel_ind_0.pt"}
 
 
 def test_model_menu_no_rc_without_corrector(tmp_path, monkeypatch):
@@ -48,15 +50,18 @@ def test_model_menu_no_rc_without_corrector(tmp_path, monkeypatch):
     pers = tmp_path / "pers"
     pers.mkdir()
     monkeypatch.setattr(ve, "PERSONALIZED_DIR", pers)
-    opts = ve.EvalVisualizer._detect_models(None, "steel_ind_0", tmp_path)
-    assert [label for label, _, _ in opts] == ["nodp", "dp"]
+    det = ve.EvalVisualizer._detect_models(None, "steel_ind_0", tmp_path)
+    assert det["nodp"] is not None and det["dp"] is not None
+    assert det["dp+rc"] == {}
 
 
 def test_model_menu_rc_requires_dp_checkpoint(tmp_path, monkeypatch):
     _make_ckpt(tmp_path, "nodp")  # dp 无 checkpoint
     pers = tmp_path / "pers"
-    pers.mkdir()
-    torch.save({"w": torch.zeros(1)}, pers / "corrector_steel_ind_0.pt")
+    (pers / "mlp").mkdir(parents=True)
+    torch.save({"w": torch.zeros(1)},
+               pers / "mlp" / "corrector_steel_ind_0.pt")
     monkeypatch.setattr(ve, "PERSONALIZED_DIR", pers)
-    opts = ve.EvalVisualizer._detect_models(None, "steel_ind_0", tmp_path)
-    assert [label for label, _, _ in opts] == ["nodp"]
+    det = ve.EvalVisualizer._detect_models(None, "steel_ind_0", tmp_path)
+    assert det["nodp"] is not None and det["dp"] is None
+    assert det["dp+rc"] == {}

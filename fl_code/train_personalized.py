@@ -4,6 +4,12 @@ Loads a frozen Global TCN (Phase 2), then trains a local Residual Corrector
 for each client with pinball loss.  The Corrector predicts 3-quantile residual
 corrections ``E_corr``, producing ``Y_final = Y_pre + E_corr``.
 
+The Corrector input is ``[Y_pre, window context, prev residual]`` per step,
+where the window context is a conv-encoded summary of the full input window
+(public + load + local channels, shape ``(11 + D_local, input_steps)``).
+The whole run output — config.json, personalized_results.json and
+``corrector_{cid}.pt`` — is saved per rc type under ``<output-dir>/<rc_type>/``.
+
 Usage::
 
     python -m fl_code.train_personalized
@@ -51,7 +57,12 @@ CLIENT_CONFIG_PATH = ROOT / "fl_code" / "models" / "client_config.yaml"
 
 
 class _LazyWindowsWithLocal(LazySlidingWindowDataset):
-    """LazySlidingWindowDataset that also returns local features on __getitem__."""
+    """LazySlidingWindowDataset that appends local features to the input window.
+
+    Returns ``X_full (11 + D_local, input_steps)`` — public channels + load
+    from the base class, plus local features at the window positions — so the
+    Residual Corrector's window encoder sees the full historical window.
+    """
 
     def __init__(self, df, seqs, public_cols, local_cols=None,
                  input_steps=144, pred_len=6, stride=48,
@@ -65,15 +76,14 @@ class _LazyWindowsWithLocal(LazySlidingWindowDataset):
     def __getitem__(self, idx):
         X, y = super().__getitem__(idx)
         _, start = self.windows[idx]
-        in_end = start + self.input_steps
-        out_end = in_end + self.pred_len
 
         if self.loc_arr is not None:
-            x_local = torch.from_numpy(self.loc_arr[in_end:out_end].copy())
-        else:
-            x_local = torch.empty(0)
+            # 本地特征可能有 NaN（z-score 后 0 = 训练段均值，客户端内填充）
+            loc_win = np.nan_to_num(
+                self.loc_arr[start:start + self.input_steps], nan=0.0).T  # (D, T_in)
+            X = torch.cat([X, torch.from_numpy(loc_win)], dim=0)          # (11+D, T_in)
 
-        return X, y, x_local
+        return X, y
 
 
 # ---------------------------------------------------------------------------
@@ -82,26 +92,31 @@ class _LazyWindowsWithLocal(LazySlidingWindowDataset):
 
 @torch.no_grad()
 def _precompute_ypre(model, df_norm, seqs, public_cols, local_cols,
-                     stride, device) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
-    """Stream through all training windows, collect (Y_pre, y_true, X_local)."""
+                     stride, device) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Stream through all training windows, collect (Y_pre, y_true, X_window).
+
+    ``x_window`` keeps the full ``(11 + D_local, input_steps)`` input window
+    (public + load + local channels) for the Corrector; the Global TCN only
+    consumes the first ``TCNConfig().in_channels`` channels.
+    """
     ds = _LazyWindowsWithLocal(
         df_norm, seqs, public_cols, local_cols,
         stride=stride, train=True,
     )
     loader = DataLoader(ds, batch_size=256, shuffle=False, drop_last=False)
 
-    ypre_list, y_list, loc_list = [], [], []
+    n_global = TCNConfig().in_channels
+    ypre_list, y_list, win_list = [], [], []
     for batch in loader:
-        X = batch[0].to(device)
-        ypre_list.append(model(X).cpu().numpy())
+        X_full = batch[0].to(device)
+        ypre_list.append(model(X_full[:, :n_global]).cpu().numpy())
         y_list.append(batch[1].cpu().numpy())
-        if ds.loc_arr is not None:
-            loc_list.append(batch[2].cpu().numpy())
+        win_list.append(X_full.cpu().numpy())
 
     y_pre = np.concatenate(ypre_list, axis=0)
     y_true = np.concatenate(y_list, axis=0)
-    x_local = np.concatenate(loc_list, axis=0) if loc_list else None
-    return y_pre, y_true, x_local
+    x_window = np.concatenate(win_list, axis=0)
+    return y_pre, y_true, x_window
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +124,7 @@ def _precompute_ypre(model, df_norm, seqs, public_cols, local_cols,
 # ---------------------------------------------------------------------------
 
 class CorrectorDataset(Dataset):
-    """Produces (y_pre, residual_history, x_local_dynamic, target) tuples.
+    """Produces (y_pre, residual_history, x_window, target) tuples.
 
     residual_history[i] = y_true[i-1] - y_pre[i-1]  (previous-window error)
     target[i]           = y_true[i]   - y_pre[i]    (current-window error)
@@ -118,10 +133,10 @@ class CorrectorDataset(Dataset):
     """
 
     def __init__(self, y_pre: np.ndarray, y_true: np.ndarray,
-                 x_local: np.ndarray | None = None):
+                 x_window: np.ndarray):
         self.y_pre = torch.from_numpy(y_pre)
         self.y_true = torch.from_numpy(y_true)
-        self.x_local = torch.from_numpy(x_local) if x_local is not None else None
+        self.x_window = torch.from_numpy(x_window)
 
     def __len__(self):
         return len(self.y_pre) - 1
@@ -130,9 +145,8 @@ class CorrectorDataset(Dataset):
         i = idx + 1  # offset: need previous window for residual_history
         residual = self.y_true[i - 1] - self.y_pre[i - 1]
         target = self.y_true[i] - self.y_pre[i]
-        x_loc = self.x_local[i] if self.x_local is not None else torch.empty(0)
 
-        return self.y_pre[i], residual, x_loc, target
+        return self.y_pre[i], residual, self.x_window[i], target
 
 
 # ---------------------------------------------------------------------------
@@ -145,17 +159,14 @@ def _train_corrector_epoch(corrector, loader, optimizer, device):
     total_loss = 0.0
     n = 0
 
-    for y_pre, residual, x_local, target in loader:
+    for y_pre, residual, x_window, target in loader:
         y_pre = y_pre.to(device)
         residual = residual.to(device)
+        x_window = x_window.to(device)
         target = target.to(device)
-        if x_local.numel() > 0:
-            x_local = x_local.to(device)
-        else:
-            x_local = None
 
         optimizer.zero_grad()
-        out = corrector(y_pre, residual, x_local)
+        out = corrector(y_pre, residual, x_window)
         loss = quantile_loss(target, out, corrector.quantiles)
         loss.backward()
         optimizer.step()
@@ -222,15 +233,19 @@ def _evaluate_personalized(global_model, corrector, df_norm, seqs,
             X_t = torch.from_numpy(X).unsqueeze(0).to(device)
             y_pre = global_model(X_t).squeeze(0)  # (pred_len,)
 
+            # Corrector prediction — window includes local features
+            X_rc = X
+            if loc_arr is not None:
+                # NaN → 0（z-score 后 0 = 训练段均值，客户端内填充）
+                loc_win = np.nan_to_num(
+                    loc_arr[pos:pos + input_steps], nan=0.0).T      # (D, T_in)
+                X_rc = np.concatenate([X_rc, loc_win], axis=0)      # (11+D, T_in)
+            X_rc_t = torch.from_numpy(X_rc).unsqueeze(0).to(device)
+
             # Corrector prediction
             y_pre_np = y_pre.cpu().numpy()
             residual_t = torch.from_numpy(prev_residual).unsqueeze(0).to(device)
-            if loc_arr is not None:
-                x_loc = loc_arr[pos + input_steps:pos + input_steps + pred_len]
-                x_loc_t = torch.from_numpy(x_loc).unsqueeze(0).to(device)
-            else:
-                x_loc_t = None
-            e_corr = corrector(y_pre.unsqueeze(0), residual_t, x_loc_t).squeeze(0)
+            e_corr = corrector(y_pre.unsqueeze(0), residual_t, X_rc_t).squeeze(0)
             y_final = y_pre_np[:, np.newaxis] + e_corr.cpu().numpy()  # (pred_len, 3)
 
             actual = load[pos + input_steps:pos + input_steps + pred_len]
@@ -340,8 +355,9 @@ def main(args: argparse.Namespace):
     print(f"Clients ({len(client_ids)}): {', '.join(client_ids)}")
 
     # --- Save run config (model architecture + hyperparameters) ---
-    variant_dir = Path(args.output_dir)
-    variant_dir.mkdir(parents=True, exist_ok=True)
+    # 每次 rc 运行完全隔离：config / results / 模型全部在 <output-dir>/<rc_type>/
+    run_dir = Path(args.output_dir) / args.rc_type
+    run_dir.mkdir(parents=True, exist_ok=True)
     corr_cfg = CorrectorConfig(rc_type=args.rc_type)
     corr_dict = {
         "rc_type": args.rc_type,
@@ -368,7 +384,7 @@ def main(args: argparse.Namespace):
         },
         "corrector": {
             **corr_dict,
-            "input": "Y_pre + residual_history + x_local_dynamic",
+            "input": "Y_pre + window_context (x_window 11+D_local → conv-encoded) + residual_history",
             "loss": "pinball (quantile loss)",
             "monotone_quantiles": "softplus increments → e10<=e50<=e90 guaranteed",
             "model_selection": "best epoch by lowest training pinball loss",
@@ -390,9 +406,9 @@ def main(args: argparse.Namespace):
         },
         "dp": None,   # Phase 3 is pure local training — no DP needed
     }
-    with open(variant_dir / "config.json", "w") as f:
+    with open(run_dir / "config.json", "w") as f:
         json.dump(config_json, f, indent=2, default=str)
-    print(f"Saved run config to {variant_dir / 'config.json'}")
+    print(f"Saved run config to {run_dir / 'config.json'}")
 
     # --- Per-client training ---
     all_results: dict[str, dict] = {}
@@ -411,7 +427,7 @@ def main(args: argparse.Namespace):
         # ---- Pre-compute Y_pre ----
         t0 = time.perf_counter()
         print(f"  Pre-computing Y_pre ({n_seqs} sequences, local_dim={local_dim})...")
-        y_pre, y_true, x_local = _precompute_ypre(
+        y_pre, y_true, x_window = _precompute_ypre(
             global_tcn, data["df_norm"], data["seqs"],
             data["public_cols"], data["local_cols"],
             args.stride, device,
@@ -432,7 +448,7 @@ def main(args: argparse.Namespace):
               f"{n_corr_params:,} params")
 
         # ---- Train Corrector ----
-        train_ds = CorrectorDataset(y_pre, y_true, x_local)
+        train_ds = CorrectorDataset(y_pre, y_true, x_window)
         loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                             drop_last=False)
         optimizer = torch.optim.Adam(corrector.parameters(), lr=args.lr)
@@ -485,8 +501,8 @@ def main(args: argparse.Namespace):
             gain = (mae_base - mae_corr) / mae_base * 100
             print(f"  Improvement: {gain:+.1f}%")
 
-        # ---- Save Corrector (best epoch only) ----
-        torch.save(best_state, variant_dir / f"corrector_{cid}.pt")
+        # ---- Save Corrector (best epoch only) — per-rc_type subfolder ----
+        torch.save(best_state, run_dir / f"corrector_{cid}.pt")
 
         all_results[cid] = {
             "mae_baseline": m_base["mae"],
@@ -557,7 +573,7 @@ def main(args: argparse.Namespace):
           f"{avg_gain:+8.2f}%")
 
     # --- Save results ---
-    with open(variant_dir / "personalized_results.json", "w") as f:
+    with open(run_dir / "personalized_results.json", "w") as f:
         json.dump({
             "args": {k: str(v) for k, v in vars(args).items()},
             "global_model": str(global_path),
@@ -573,10 +589,10 @@ def main(args: argparse.Namespace):
     config_json["corrector"]["local_feat_dim_per_client"] = {
         cid: r["local_dim"] for cid, r in all_results.items()
     }
-    with open(variant_dir / "config.json", "w") as f:
+    with open(run_dir / "config.json", "w") as f:
         json.dump(config_json, f, indent=2, default=str)
 
-    print(f"\nOutputs saved to {variant_dir}")
+    print(f"\nOutputs saved to {run_dir}")
 
 
 # ---------------------------------------------------------------------------

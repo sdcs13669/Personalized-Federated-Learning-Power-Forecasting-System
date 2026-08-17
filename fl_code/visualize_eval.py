@@ -3,12 +3,12 @@
 Workflow:
   1. pick a client (from ``client_config.yaml``)
   2. pick one or more load sequences
-  3. pick a model — exactly three options, auto-discovered under the
-     baseline root (default fl_code/baseline_outputs):
-       - nodp   : Global TCN only (Phase 2, non-DP)
-       - dp     : Global TCN only (Phase 2, DP)
-       - dp+rc  : DP Global TCN + Corrector (Phase 3; shown when a
-                  Corrector checkpoint exists for the client)
+  3. pick a model — two-stage selection, auto-discovered under the baseline
+     root (default fl_code/baseline_outputs):
+       - first the family: nodp / dp / dp+rc (each shown when available)
+       - when dp+rc is selected, an extra RC-type menu (mlp / lstm / tcn)
+         appears, listing the Corrector checkpoints found for the client
+         under fl_code/personalized_outputs/<rc_type>/
   4. rolling forecast; predictions are **de-normalised** back to physical
      units and plotted against the actuals for the first 7 days of the test
      split (with Corrector: P10/P50/P90 curves + 80% CI band)
@@ -109,14 +109,16 @@ def _rolling_forecast(model, corrector, df_norm, seq, public_cols, local_cols,
         y_pre = model(X_t).squeeze(0).cpu().numpy()          # (PRED_LEN,)
 
         if corrector is not None:
-            res_t = torch.from_numpy(prev_residual).unsqueeze(0).to(device)
+            X_rc = X
             if local_dim > 0:
-                x_loc = loc_arr[pos + INPUT_STEPS:pos + INPUT_STEPS + PRED_LEN]
-                x_loc_t = torch.from_numpy(x_loc).unsqueeze(0).to(device)
-            else:
-                x_loc_t = None
+                # NaN → 0（z-score 后 0 = 训练段均值，客户端内填充）
+                loc_win = np.nan_to_num(
+                    loc_arr[pos:pos + INPUT_STEPS], nan=0.0).T  # (D, T_in)
+                X_rc = np.concatenate([X_rc, loc_win], axis=0)  # (11+D, T_in)
+            X_rc_t = torch.from_numpy(X_rc).unsqueeze(0).to(device)
+            res_t = torch.from_numpy(prev_residual).unsqueeze(0).to(device)
             yp_t = torch.from_numpy(y_pre).unsqueeze(0).to(device)
-            e = corrector(yp_t, res_t, x_loc_t).squeeze(0).cpu().numpy()  # (PRED_LEN, 3)
+            e = corrector(yp_t, res_t, X_rc_t).squeeze(0).cpu().numpy()  # (PRED_LEN, 3)
             y_q = y_pre[:, np.newaxis] + e                     # (PRED_LEN, 3) = P10/P50/P90
         else:
             y_q = np.stack([y_pre, y_pre, y_pre], axis=1)      # point forecast
@@ -194,8 +196,15 @@ class EvalVisualizer:
         ttk.Label(mid, text="Model:").pack(side="left")
         self.model_var = tk.StringVar()
         self.model_cb = ttk.Combobox(mid, textvariable=self.model_var,
-                                     state="readonly", width=34)
+                                     state="readonly", width=12)
         self.model_cb.pack(side="left", padx=6)
+        self.model_cb.bind("<<ComboboxSelected>>", self._on_model_selected)
+
+        ttk.Label(mid, text="RC type:").pack(side="left", padx=(10, 0))
+        self.rc_var = tk.StringVar()
+        self.rc_cb = ttk.Combobox(mid, textvariable=self.rc_var,
+                                  state="disabled", width=10)
+        self.rc_cb.pack(side="left", padx=6)
 
         ttk.Label(mid, text="Sequences (multi-select):").pack(side="left")
         self.seq_list = tk.Listbox(mid, selectmode="extended",
@@ -213,40 +222,54 @@ class EvalVisualizer:
     # ---- model detection ----
 
     def _detect_models(self, cid: str, root: Path
-                       ) -> list[tuple[str, Path, Path | None]]:
-        """Auto-discover the three fixed model options under ``root``.
+                       ) -> dict[str, Path | dict[str, Path]]:
+        """Auto-discover the model options under ``root``.
 
-        Returns ``[(label, global_ckpt, corrector_path_or_None)]``:
-        ``nodp`` / ``dp`` (latest checkpoint per variant) and ``dp+rc``
-        (DP model + Corrector, only when ``corrector_{cid}.pt`` exists).
+        Returns ``{"nodp": Path|None, "dp": Path|None, "dp+rc": {rc_type: Path}}``:
+        nodp/dp are the latest checkpoints per variant; ``dp+rc`` maps rc type
+        to the Corrector path found under ``PERSONALIZED_DIR/<rc_type>/``
+        (``corrector_{cid}.pt``).
         """
         def latest(sub: str) -> Path | None:
             ckpts = sorted((root / sub / "checkpoints").glob("round_*.pt"),
                            key=lambda p: int(p.stem.split("_")[-1]))
             return ckpts[-1] if ckpts else None
 
-        options: list[tuple[str, Path, Path | None]] = []
-        nodp_ckpt = latest("nodp")
-        dp_ckpt = latest("dp")
-        if nodp_ckpt is not None:
-            options.append(("nodp", nodp_ckpt, None))
-        if dp_ckpt is not None:
-            options.append(("dp", dp_ckpt, None))
-        corr = PERSONALIZED_DIR / f"corrector_{cid}.pt"
-        if dp_ckpt is not None and corr.exists():
-            options.append(("dp+rc", dp_ckpt, corr))
-        return options
+        detected: dict[str, Path | dict[str, Path]] = {
+            "nodp": latest("nodp"),
+            "dp": latest("dp"),
+            "dp+rc": {},
+        }
+        if detected["dp"] is not None:
+            for rc_type in ("mlp", "lstm", "tcn"):
+                corr = PERSONALIZED_DIR / rc_type / f"corrector_{cid}.pt"
+                if corr.exists():
+                    detected["dp+rc"][rc_type] = corr
+        return detected
 
     def _scan_models(self) -> list[str]:
-        """Re-discover model options for the current client + root dir."""
+        """Re-discover model options (family + RC types) for the client/root."""
         root = Path(self.root_var.get().strip() or str(BASELINE_DIR))
-        self.model_map = {
-            label: (ckpt, corr) for label, ckpt, corr
-            in self._detect_models(self.client_var.get(), root)}
-        labels = list(self.model_map.keys())
-        self.model_cb["values"] = labels
-        self.model_var.set(labels[0] if labels else "")
-        return labels
+        self.detected = self._detect_models(self.client_var.get(), root)
+        families = [f for f in ("nodp", "dp", "dp+rc")
+                    if self.detected.get(f)]
+        self.model_cb["values"] = families
+        self.model_var.set(families[0] if families else "")
+        rc_types = list(self.detected["dp+rc"])
+        self.rc_cb["values"] = rc_types
+        self.rc_var.set(rc_types[0] if rc_types else "")
+        self._update_rc_state()
+        return families
+
+    def _update_rc_state(self):
+        """Enable the RC-type menu only when the dp+rc family is selected."""
+        if self.model_var.get() == "dp+rc" and self.rc_cb["values"]:
+            self.rc_cb["state"] = "readonly"
+        else:
+            self.rc_cb["state"] = "disabled"
+
+    def _on_model_selected(self, _event=None):
+        self._update_rc_state()
 
     def _on_root_changed(self, _event=None):
         if self.current is None:
@@ -278,7 +301,12 @@ class EvalVisualizer:
         rc_type = self._infer_rc_type(sd)
         corrector = build_corrector(
             CorrectorConfig(rc_type=rc_type, local_feat_dim=local_dim))
-        corrector.load_state_dict(sd)
+        try:
+            corrector.load_state_dict(sd)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"Corrector 版本不匹配（旧架构 checkpoint）：{path}\n"
+                f"请用当前代码重新训练 Phase 3（{exc}）")
         corrector.eval()
         return corrector.to(self.device)
 
@@ -310,7 +338,7 @@ class EvalVisualizer:
 
             self._scan_models()
 
-            n_corr = len({v[1] for v in self.model_map.values() if v[1] is not None})
+            n_corr = len(self.detected["dp+rc"])
             self.status_var.set(
                 f"{cid}: {len(seqs)} sequences, {n_corr} Corrector(s) "
                 f"found | {info.get('valid_days', '?')} valid days")
@@ -341,18 +369,27 @@ class EvalVisualizer:
                                    "Select at least one sequence.")
             return
 
-        label = self.model_var.get()
-        entry = self.model_map.get(label) if label else None
-        if entry is None:
+        family = self.model_var.get()
+        if family not in self.detected:
             messagebox.showwarning(
                 "No model",
                 "No Phase 2 checkpoint found. Run train_baseline.py first, "
                 "or check the baseline root path.")
             return
-        ckpt_path, corr_path = entry
+        if family == "dp+rc":
+            ckpt_path = self.detected["dp"]          # dp+rc 用 DP 全局模型
+            corr_path = self.detected["dp+rc"].get(self.rc_var.get())
+        else:
+            ckpt_path = self.detected[family]
+            corr_path = None
         global_model = self._get_global_model(ckpt_path)
-        corrector = (self._load_corrector(corr_path, len(self.current["local_cols"]))
-                     if corr_path else None)
+        try:
+            corrector = (self._load_corrector(
+                             corr_path, len(self.current["local_cols"]))
+                         if corr_path else None)
+        except RuntimeError as exc:
+            messagebox.showerror("Corrector load failed", str(exc))
+            return
 
         self.status_var.set(f"Forecasting {len(sel)} sequence(s) ...")
         self.root.update_idletasks()

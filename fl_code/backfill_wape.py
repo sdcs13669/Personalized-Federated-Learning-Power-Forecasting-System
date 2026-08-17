@@ -76,7 +76,10 @@ def backfill(results: dict, json_path: Path, device: str) -> dict:
         corrector = build_corrector(CorrectorConfig(
             rc_type=r["corrector_type"],
             local_feat_dim=r["local_dim"])).to(device)
-        ckpt = output_dir / f"corrector_{cid}.pt"
+        # 新布局 <output_dir>/<rc_type>/corrector_{cid}.pt，回退到 JSON 同目录
+        ckpt = output_dir / r["corrector_type"] / f"corrector_{cid}.pt"
+        if not ckpt.exists():
+            ckpt = json_path.parent / r["corrector_type"] / f"corrector_{cid}.pt"
         if not ckpt.exists():
             ckpt = json_path.parent / f"corrector_{cid}.pt"
         corrector.load_state_dict(

@@ -53,7 +53,8 @@ def v2_personalized_wape(pers_out: Path) -> dict:
           "--clients", "steel_ind_0",
           "--max-seqs", "5", "--eval-seqs", "2", "--epochs", "1",
           "--output-dir", str(pers_out)])
-    with open(pers_out / "personalized_results.json") as f:
+    # 输出按 rc 类型分文件夹（默认 mlp）
+    with open(pers_out / "mlp" / "personalized_results.json") as f:
         res = json.load(f)
     fm = res["final_metrics"]
     r = res["results"]["steel_ind_0"]
@@ -102,9 +103,10 @@ def v3_compare_figure(res: dict) -> None:
           f"{n_clients} clients x 6 bars, no annotation\n")
 
 
-def v4_plot_results_cli(figs_out: Path) -> None:
+def v4_plot_results_cli(figs_out: Path, pers_json: Path) -> None:
     _run([sys.executable, "-m", "fl_code.plot_results",
-          "--fig-dir", str(figs_out)])
+          "--fig-dir", str(figs_out),
+          "--personalized-json", str(pers_json)])
     for name in ("fig_phase1_nodp.png", "fig_phase2_dp.png",
                  "fig_phase3_personalized.png", "fig_phase_compare.png"):
         if not (figs_out / name).exists():
@@ -122,7 +124,7 @@ def main() -> None:
     v1_unit_tests()
     res = v2_personalized_wape(pers_out)
     v3_compare_figure(res)
-    v4_plot_results_cli(figs_out)
+    v4_plot_results_cli(figs_out, pers_out / "mlp" / "personalized_results.json")
     print("ALL CHECKS PASSED")
 
 

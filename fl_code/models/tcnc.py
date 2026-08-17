@@ -17,7 +17,7 @@ class TCNC(nn.Module):
         global_model = TCN(...)
         corrector = TCNRC(...)
         model = TCNC(global_model, corrector)
-        y_final, y_pre, e_corr = model(x_public, residual_history, x_local)
+        y_final, y_pre, e_corr = model(x_public, residual_history, x_window)
     """
 
     def __init__(self, global_model, corrector):
@@ -25,7 +25,7 @@ class TCNC(nn.Module):
         self.global_model = global_model
         self.corrector = corrector
 
-    def forward(self, x_public, residual_history, x_local_dynamic=None):
+    def forward(self, x_public, residual_history, x_window):
         """Full two-stage forward pass.
 
         Parameters
@@ -34,8 +34,9 @@ class TCNC(nn.Module):
             Public features + historical load for the global model.
         residual_history : Tensor, shape ``(B, pred_len)``
             Residual from previous forecast cycle.
-        x_local_dynamic : Tensor or None, shape ``(B, pred_len, D_local)``
-            Local dynamic features.
+        x_window : Tensor, shape ``(B, in_channels + D_local, input_steps)``
+            Full input window (public + load + local features) for the
+            Corrector's window encoder.
 
         Returns
         -------
@@ -47,7 +48,7 @@ class TCNC(nn.Module):
             Residual corrections.
         """
         y_pre = self.global_model(x_public)
-        e_corr = self.corrector(y_pre, residual_history, x_local_dynamic)
+        e_corr = self.corrector(y_pre, residual_history, x_window)
         y_final = y_pre.unsqueeze(-1) + e_corr
         return y_final, y_pre, e_corr
 

@@ -3,7 +3,8 @@
 Reads:
   - ``fl_code/baseline_outputs/nodp/baseline_history.json`` (Phase 1: FedAvg, no DP)
   - ``fl_code/baseline_outputs/dp/baseline_history.json`` (Phase 2: DP-FedAvg)
-  - ``fl_code/personalized_outputs/personalized_results.json`` (Phase 3: dp+rc)
+  - ``fl_code/personalized_outputs/<rc_type>/personalized_results.json``
+    (Phase 3: dp+rc; rc type chosen via ``--rc-type``)
 
 Produces one figure per stage (``fl_code/figures/``), each with the
 training-loss curves on the left and the validation-metric bars on the right,
@@ -22,10 +23,12 @@ each figure carries a note saying so.
 
 Usage::
 
-    python -m fl_code.plot_results          # save PNGs
-    python -m fl_code.plot_results --show   # also open figure windows
-    python -m fl_code.plot_results --root my_run            # custom baseline output root
-    python -m fl_code.plot_results --fig-dir my_figs        # custom figure output dir
+    python -m fl_code.plot_results                        # save PNGs (rc type: mlp)
+    python -m fl_code.plot_results --rc-type tcn          # pick a Phase 3 rc type
+    python -m fl_code.plot_results --personalized-json my/path/personalized_results.json
+    python -m fl_code.plot_results --show                 # also open figure windows
+    python -m fl_code.plot_results --root my_run          # custom baseline output root
+    python -m fl_code.plot_results --fig-dir my_figs      # custom figure output dir
 """
 
 from __future__ import annotations
@@ -37,8 +40,9 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-PERSONALIZED_JSON = ROOT / "fl_code" / "personalized_outputs" / "personalized_results.json"
 OUT_DIR = ROOT / "fl_code" / "figures"
+_LEGACY_PERSONALIZED_JSON = (ROOT / "fl_code" / "personalized_outputs"
+                             / "personalized_results.json")
 
 
 def _load_json(path: Path) -> dict | None:
@@ -179,7 +183,7 @@ def _fig_phase2(baseline: dict, L: dict, plt, fig_title: str | None = None):
 # Phase 3 figure — left: loss curves, right: validation bars
 # ---------------------------------------------------------------------------
 
-def _fig_phase3(personalized: dict, L: dict, plt):
+def _fig_phase3(personalized: dict, L: dict, plt, rc_type: str = "mlp"):
     fig, (ax_line, ax_bar) = plt.subplots(1, 2, figsize=(13.5, 5))
 
     # --- left: per-client per-epoch corrector training loss ---
@@ -209,7 +213,7 @@ def _fig_phase3(personalized: dict, L: dict, plt):
     ax_bar.legend(fontsize=8)
     ax_bar.grid(alpha=0.3, axis="y")
 
-    fig.suptitle(L["fig_p3"], fontsize=13)
+    fig.suptitle(f"{L['fig_p3']} ({rc_type})", fontsize=13)
     _finish(fig, L)
     return fig
 
@@ -308,8 +312,12 @@ def _fig_compare(table: dict, L: dict, plt):
 # Main
 # ---------------------------------------------------------------------------
 
-def main(show: bool = False, root: Path | None = None,
-         fig_dir: Path | None = None):
+def _personalized_json_path(rc_type: str) -> Path:
+    return ROOT / "fl_code" / "personalized_outputs" / rc_type / "personalized_results.json"
+
+
+def main(show: bool = False, root: Path | None = None, fig_dir: Path | None = None,
+         rc_type: str = "mlp", personalized_json: Path | None = None):
     import matplotlib
     matplotlib.use("TkAgg" if show else "Agg")
     import matplotlib.pyplot as plt
@@ -325,11 +333,23 @@ def main(show: bool = False, root: Path | None = None,
         if baseline is not None:
             baselines[variant] = baseline
             print(f"Using {variant} results: {cand}")
-    personalized = _load_json(PERSONALIZED_JSON)
+
+    if personalized_json is None:
+        personalized_json = _personalized_json_path(rc_type)
+        if not personalized_json.exists() and _LEGACY_PERSONALIZED_JSON.exists():
+            print(f"WARNING: {personalized_json} not found — "
+                  f"using legacy {_LEGACY_PERSONALIZED_JSON}")
+            personalized_json = _LEGACY_PERSONALIZED_JSON
+    personalized = _load_json(personalized_json)
+    if personalized is not None:
+        # 仅当确实按 --rc-type 解析时才标注 rc 类型（显式 --personalized-json 不标）
+        tag = (f" ({rc_type})"
+               if personalized_json == _personalized_json_path(rc_type) else "")
+        print(f"Using personalized results{tag}: {personalized_json}")
     if not baselines and personalized is None:
         raise SystemExit(
             f"No result files found:\n  {root / 'nodp' / 'baseline_history.json'}\n"
-            f"  {root / 'dp' / 'baseline_history.json'}\n  {PERSONALIZED_JSON}\n"
+            f"  {root / 'dp' / 'baseline_history.json'}\n  {personalized_json}\n"
             f"Run train_baseline.py / train_personalized.py first.")
 
     out_dir = fig_dir or OUT_DIR
@@ -349,7 +369,7 @@ def main(show: bool = False, root: Path | None = None,
         saved.append(p)
 
     if personalized is not None:
-        fig = _fig_phase3(personalized, L, plt)
+        fig = _fig_phase3(personalized, L, plt, rc_type)
         p = out_dir / "fig_phase3_personalized.png"
         fig.savefig(p, dpi=150)
         saved.append(p)
@@ -383,6 +403,16 @@ if __name__ == "__main__":
                         default=str(OUT_DIR),
                         help="Figure output directory "
                              "(default: fl_code/figures)")
+    parser.add_argument("--rc-type", type=str, default="mlp",
+                        choices=["mlp", "lstm", "tcn"],
+                        help="Residual Corrector type for the Phase 3 results "
+                             "(reads fl_code/personalized_outputs/<rc-type>/"
+                             "personalized_results.json; default: mlp)")
+    parser.add_argument("--personalized-json", type=str, default=None,
+                        help="Explicit path to personalized_results.json "
+                             "(overrides --rc-type resolution)")
     args = parser.parse_args()
     main(show=args.show, root=Path(args.root),
-         fig_dir=Path(args.fig_dir))
+         fig_dir=Path(args.fig_dir), rc_type=args.rc_type,
+         personalized_json=(Path(args.personalized_json)
+                            if args.personalized_json else None))

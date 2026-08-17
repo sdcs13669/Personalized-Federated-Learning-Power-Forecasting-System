@@ -1,6 +1,6 @@
 {
   "script": "fl_code.train_baseline",
-  "phase": "Phase 2 \u2014 FedAvg GlobalTCN (Flower simulation)",
+  "phase": "Phase 2 \u2014 FedAvg GlobalTCN (flwr simulation)",
   "model": {
     "name": "GlobalTCN",
     "in_channels": 11,
@@ -27,7 +27,7 @@
     "train_ratio": 0.8
   },
   "training": {
-    "rounds": 50,
+    "rounds": 30,
     "local_epochs": 1,
     "lr": 0.001,
     "batch_size": 64,

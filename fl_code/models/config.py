@@ -23,9 +23,10 @@ class TCNConfig:
     input_steps: int = INPUT_STEPS   # from fl_code/config.py
     pred_len: int = PRED_LEN         # from fl_code/config.py
 
-    num_channels: tuple[int, ...] = (32,) * 7  # 7 layers, 32ch each
+    num_channels: tuple[int, ...] = (64,) * 7  # 7 layers, 64ch each
     kernel_size: int = 2
     dropout: float = 0.2
+    head_hidden: int = 32            # FFN head: [64, 32, pred_len] + LeakyReLU
 
     def to_dict(self):
         return asdict(self)
@@ -35,11 +36,17 @@ class TCNConfig:
 class CorrectorConfig:
     """Per-client residual corrector (never shared).
 
-    Supports three architectures selected by ``rc_type``:
+    All three architectures share the same per-step input layout:
+
+        [y_pre (1), window context (window_ctx_dim), prev residual (1)]
+
+    where the window context is a conv-encoded summary of the full Global-TCN
+    input window (public + load + local channels).  Supports three
+    architectures selected by ``rc_type``:
 
     - ``"mlp"``  — :class:`MLPRC`:  per-step MLP, no temporal interaction
-    - ``"lstm"`` — :class:`LSTMRC`: lightweight LSTM, sequential modelling
-    - ``"tcn"``  — :class:`TCNRC`:  causal TCN (rf=31 >= 6)
+    - ``"lstm"`` — :class:`LSTMRC`: FFN-compress + LSTM + FFN head
+    - ``"tcn"``  — :class:`TCNRC`:  FFN-compress + causal TCN + FFN head
     """
 
     rc_type: Literal["mlp", "lstm", "tcn"] = "mlp"   # default: MLP (simplest, fastest)
@@ -49,15 +56,23 @@ class CorrectorConfig:
     quantiles: tuple[float, ...] = (0.1, 0.5, 0.9)
     dropout: float = 0.1
 
+    # Window context (shared by all rc types)
+    window_in_channels: int = 11     # Global TCN input channels (10 public + 1 load)
+    window_ctx_dim: int = 512        # window context vector dimension (configurable)
+
     # MLP settings (used when rc_type="mlp")
-    hidden_dims: tuple[int, ...] = (64, 32)
+    hidden_dims: tuple[int, ...] = (512, 256, 128, 64, 32)
+
+    # LSTM/TCN shared FFNs (used when rc_type in {"lstm", "tcn"})
+    ffn_hidden: tuple[int, ...] = (256, 128)   # per-step compress FFN: [in, 256, 128]
+    head_hidden: int = 32                      # output FFN: [seq_out, 32, 3]
 
     # LSTM settings (used when rc_type="lstm")
-    lstm_hidden_size: int = 32
+    lstm_hidden_size: int = 128
     lstm_num_layers: int = 1
 
     # TCN settings (used when rc_type="tcn")
-    num_channels: tuple[int, ...] = (16,) * 4  # 4 layers, rf=31
+    num_channels: tuple[int, ...] = (128,) * 4  # 4 layers, rf=31 >= 6
     kernel_size: int = 2
 
     def to_dict(self):
@@ -98,11 +113,12 @@ def build_tcn(config: TCNConfig):
         num_channels=list(config.num_channels),
         kernel_size=config.kernel_size,
         dropout=config.dropout,
+        head_hidden=config.head_hidden,
     )
 
 
 def build_corrector(config: CorrectorConfig):
-    """Build a :class:`MLPRC` or :class:`TCNRC` based on ``rc_type`` (Phase 3)."""
+    """Build a :class:`MLPRC` / :class:`LSTMRC` / :class:`TCNRC` (Phase 3)."""
     from .rc import MLPRC, LSTMRC, TCNRC
 
     if config.rc_type == "mlp":
@@ -112,6 +128,8 @@ def build_corrector(config: CorrectorConfig):
             quantiles=config.quantiles,
             hidden_dims=config.hidden_dims,
             dropout=config.dropout,
+            window_in_channels=config.window_in_channels,
+            window_ctx_dim=config.window_ctx_dim,
         )
     elif config.rc_type == "lstm":
         return LSTMRC(
@@ -121,6 +139,10 @@ def build_corrector(config: CorrectorConfig):
             hidden_size=config.lstm_hidden_size,
             num_layers=config.lstm_num_layers,
             dropout=config.dropout,
+            window_in_channels=config.window_in_channels,
+            window_ctx_dim=config.window_ctx_dim,
+            ffn_hidden=config.ffn_hidden,
+            head_hidden=config.head_hidden,
         )
     else:
         return TCNRC(
@@ -130,6 +152,10 @@ def build_corrector(config: CorrectorConfig):
             num_channels=config.num_channels,
             kernel_size=config.kernel_size,
             dropout=config.dropout,
+            window_in_channels=config.window_in_channels,
+            window_ctx_dim=config.window_ctx_dim,
+            ffn_hidden=config.ffn_hidden,
+            head_hidden=config.head_hidden,
         )
 
 

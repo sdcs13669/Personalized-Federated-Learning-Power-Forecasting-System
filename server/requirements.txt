@@ -6,6 +6,5 @@ bcrypt>=4.2
 pytest>=8.0
 httpx>=0.27
 flwr==1.30.0
-torch>=2.0
 numpy
 dp-accounting==0.6.0

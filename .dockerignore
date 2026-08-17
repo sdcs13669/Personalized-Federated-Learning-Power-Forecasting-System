@@ -1,0 +1,17 @@
+.git
+.gitignore
+.claude
+.superpowers
+.pytest_cache
+__pycache__
+*.pyc
+data/
+docs/
+fl_code/baseline_outputs/
+fl_code/personalized_outputs/
+fl_code/figures/
+tests/
+*.md
+environment.yml
+setup_env.sh
+Federal learning simulation/

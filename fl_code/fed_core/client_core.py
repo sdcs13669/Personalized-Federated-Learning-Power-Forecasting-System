@@ -12,6 +12,25 @@ from fl_code.fed_core.accounting import dp_epsilon, sigma_for_epsilon
 from fl_code.fed_core.params import state_dict_to_tensors, tensors_to_state_dict
 from fl_code.models import TCNConfig, build_tcn
 from fl_code.train_eval_utils import train_epoch
+from torch.func import functional_call, grad, vmap
+
+
+def _loss_fn_dp(p, x, yy, m):
+    """Stateless loss for DP per-sample grad.
+
+    ``model`` is passed as an argument (in_dims=None) instead of being
+    captured in a closure, so that ``vmap``'s internal function cache
+    doesn't accumulate one entry per round (each holding a strong ref
+    to a past model instance — the cross-round GPU memory leak observed
+    on the 64ch GlobalTCN DP path).
+    """
+    out = functional_call(m, p, (x.unsqueeze(0),))
+    return (out.squeeze(0) - yy).abs().mean()
+
+
+_per_sample_grad_dp = vmap(grad(_loss_fn_dp, argnums=0),
+                           in_dims=(None, 0, 0, None),
+                           randomness="different")
 
 
 def _train_plain(model, train_ds, lr, batch_size, local_epochs, device) -> float:
@@ -29,16 +48,7 @@ def _train_plain(model, train_ds, lr, batch_size, local_epochs, device) -> float
 
 def _train_dp(model, train_ds, lr, batch_size, local_epochs, device,
               noise_multiplier: float, clipping_norm: float) -> float:
-    from torch.func import functional_call, grad, vmap
-
     params = dict(model.named_parameters())
-
-    def loss_fn(p, x, yy):
-        out = functional_call(model, p, (x.unsqueeze(0),))
-        return (out.squeeze(0) - yy).abs().mean()
-
-    per_sample_grad = vmap(grad(loss_fn, argnums=0), in_dims=(None, 0, 0),
-                           randomness="different")
 
     # Parity with train_baseline._train_client_dp: the optimizer is created
     # ONCE outside the epochs loop, while the DataLoader is recreated per
@@ -52,7 +62,7 @@ def _train_dp(model, train_ds, lr, batch_size, local_epochs, device,
         for X, y, *_ in loader:
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
-            grads = per_sample_grad(params, X, y)
+            grads = _per_sample_grad_dp(params, X, y, model)
             norms = torch.sqrt(sum(
                 g.double().pow(2).sum(dim=tuple(range(1, g.dim())))
                 for g in grads.values()))
@@ -69,6 +79,14 @@ def _train_dp(model, train_ds, lr, batch_size, local_epochs, device,
                 epoch_loss += (out - y).abs().sum().item()
                 n_samples += b
         loss = epoch_loss / n_samples
+    # Break lingering refs from the last batch's autograd graph and return
+    # CUDA segments to the allocator so the next round starts with a
+    # clean slate (safety net on top of the module-level vmap cache fix).
+    # Note: grads is a local that goes out of scope naturally; we only
+    # explicitly del params/optimizer which are always defined.
+    del params, optimizer
+    import gc; gc.collect()
+    torch.cuda.empty_cache()
     return loss
 
 

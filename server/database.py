@@ -35,6 +35,33 @@ def get_db() -> Generator[Session]:
         db.close()
 
 
+def _migrate(target_engine=None) -> None:
+    """Idempotent SQLite column backfill for the adaptive-clip feature."""
+    from sqlalchemy import text
+    eng = target_engine or engine
+    with eng.begin() as conn:
+        task_cols = {r[1] for r in
+                     conn.execute(text("PRAGMA table_info(tasks)")).fetchall()}
+        audit_cols = {r[1] for r in
+                      conn.execute(text("PRAGMA table_info(audit_rounds)")).fetchall()}
+        if "dp_adaptive_clip" not in task_cols:
+            conn.execute(text("ALTER TABLE tasks ADD COLUMN "
+                              "dp_adaptive_clip BOOLEAN DEFAULT 0"))
+        if "dp_clip_lr" not in task_cols:
+            conn.execute(text("ALTER TABLE tasks ADD COLUMN "
+                              "dp_clip_lr FLOAT DEFAULT 0.2"))
+        if "dp_clip_target_quantile" not in task_cols:
+            conn.execute(text("ALTER TABLE tasks ADD COLUMN "
+                              "dp_clip_target_quantile FLOAT DEFAULT 0.5"))
+        if "dp_clip_count_noise" not in task_cols:
+            conn.execute(text("ALTER TABLE tasks ADD COLUMN "
+                              "dp_clip_count_noise FLOAT DEFAULT 0.5"))
+        if "clip_norm" not in audit_cols:
+            conn.execute(text("ALTER TABLE audit_rounds ADD COLUMN "
+                              "clip_norm FLOAT"))
+
+
 def init_db() -> None:
     """Create all tables (called on server startup)."""
     Base.metadata.create_all(bind=engine)
+    _migrate()

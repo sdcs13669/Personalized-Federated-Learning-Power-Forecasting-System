@@ -50,6 +50,10 @@ def start_task(
             "dp_delta": task.dp_delta or 1e-5,
             "dp_sigma": None,
             "dp_target_epsilon": task.dp_epsilon,
+            "dp_adaptive_clip": task.dp_adaptive_clip or False,
+            "dp_clip_lr": task.dp_clip_lr or 0.2,
+            "dp_clip_target_quantile": task.dp_clip_target_quantile or 0.5,
+            "dp_clip_count_noise": task.dp_clip_count_noise or 0.5,
         },
     }
     participant_list = [
@@ -90,6 +94,7 @@ def get_audit(
             "dropped": json.loads(r.dropped),
             "loss": r.loss,
             "client_losses": json.loads(r.client_losses) if r.client_losses else {},
+            "clip_norm": r.clip_norm,
             "finished_at": str(r.finished_at) if r.finished_at else None,
         }
         for r in rounds

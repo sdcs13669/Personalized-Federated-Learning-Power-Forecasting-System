@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, Integer, Text, Float, TIMESTAMP, ForeignKey, UniqueConstraint,
+    Column, Integer, Text, Float, Boolean, TIMESTAMP, ForeignKey,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -39,6 +40,10 @@ class Task(Base):
     dp_clip = Column(Float, nullable=True)
     local_epochs = Column(Integer, default=1)
     batch_size = Column(Integer, default=64)
+    dp_adaptive_clip = Column(Boolean, default=False)
+    dp_clip_lr = Column(Float, default=0.2)
+    dp_clip_target_quantile = Column(Float, default=0.5)
+    dp_clip_count_noise = Column(Float, default=0.5)
     grpc_port = Column(Integer, default=8089)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
     started_at = Column(TIMESTAMP, nullable=True)
@@ -77,6 +82,7 @@ class AuditRound(Base):
     dropped = Column(Text, nullable=False)
     loss = Column(Float, nullable=True)
     client_losses = Column(Text, nullable=True)
+    clip_norm = Column(Float, nullable=True)
     finished_at = Column(TIMESTAMP, nullable=True)
 
     task = relationship("Task", back_populates="audit_rounds")

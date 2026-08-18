@@ -23,6 +23,10 @@ class CreateTaskRequest(BaseModel):
     dp_epsilon: float | None = None
     dp_delta: float | None = None
     dp_clip: float | None = None
+    dp_adaptive_clip: bool = False
+    dp_clip_lr: float = 0.2
+    dp_clip_target_quantile: float = 0.5
+    dp_clip_count_noise: float = 0.5
     local_epochs: int = 1
     batch_size: int = 64
 
@@ -38,6 +42,10 @@ def _task_to_dict(task: Task, key: str | None = None) -> dict:
         "dp_epsilon": task.dp_epsilon,
         "dp_delta": task.dp_delta,
         "dp_clip": task.dp_clip,
+        "dp_adaptive_clip": task.dp_adaptive_clip,
+        "dp_clip_lr": task.dp_clip_lr,
+        "dp_clip_target_quantile": task.dp_clip_target_quantile,
+        "dp_clip_count_noise": task.dp_clip_count_noise,
         "local_epochs": task.local_epochs,
         "batch_size": task.batch_size,
         "grpc_port": task.grpc_port,
@@ -56,6 +64,21 @@ def create_task(
     user: User = Depends(get_current_user_from_header),
     db: Session = Depends(get_db),
 ):
+    if req.dp_adaptive_clip:
+        if req.dp_epsilon is None:
+            raise HTTPException(
+                status_code=400,
+                detail="dp_adaptive_clip requires dp_epsilon (per-client DP mode)")
+        if req.dp_clip_lr is None or req.dp_clip_lr <= 0:
+            raise HTTPException(status_code=400,
+                                detail="dp_clip_lr must be > 0")
+        if not (0 < req.dp_clip_target_quantile < 1):
+            raise HTTPException(status_code=400,
+                                detail="dp_clip_target_quantile must be in (0, 1)")
+        if req.dp_clip_count_noise is None or req.dp_clip_count_noise <= 0:
+            raise HTTPException(status_code=400,
+                                detail="dp_clip_count_noise must be > 0")
+
     key = secrets.token_hex(16)
     key_hash = hashlib.sha256(key.encode()).hexdigest()
     task = Task(
@@ -68,6 +91,10 @@ def create_task(
         dp_epsilon=req.dp_epsilon,
         dp_delta=req.dp_delta,
         dp_clip=req.dp_clip,
+        dp_adaptive_clip=req.dp_adaptive_clip,
+        dp_clip_lr=req.dp_clip_lr,
+        dp_clip_target_quantile=req.dp_clip_target_quantile,
+        dp_clip_count_noise=req.dp_clip_count_noise,
         local_epochs=req.local_epochs,
         batch_size=req.batch_size,
     )

@@ -125,8 +125,18 @@ class AuditFedAvg(FedAvg):
         fractions = []
         for proxy, res in results:
             f = res.metrics.get("dpfedavg_clip_fraction")
-            if f is not None:
-                fractions.append(float(f))
+            if f is None:
+                continue
+            f = float(f)
+            if not math.isfinite(f):
+                # Poisoned/non-finite fraction: NaN propagates through the
+                # mean and the min/max clamp, corrupting _clip_norm for the
+                # rest of the run — skip it.
+                logging.getLogger("flwr").warning(
+                    "proxy %s reported non-finite dpfedavg_clip_fraction=%r; "
+                    "skipped in clip-norm update", proxy.cid, f)
+                continue
+            fractions.append(f)
         if not fractions:
             return
         f_avg = sum(fractions) / len(fractions)

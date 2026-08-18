@@ -31,9 +31,9 @@ def run(mode: str, train_ds, rounds: int, device: str) -> None:
     for r in range(rounds):
         model = build_tcn(TCNConfig()).to(device)
         if mode == "dp":
-            loss = _train_dp(model, train_ds, lr=1e-3, batch_size=16,
-                             local_epochs=1, device=device,
-                             noise_multiplier=1.0, clipping_norm=1.0)
+            loss, _ = _train_dp(model, train_ds, lr=1e-3, batch_size=16,
+                                local_epochs=1, device=device,
+                                noise_multiplier=1.0, clipping_norm=1.0)
         else:
             loss = _train_plain(model, train_ds, lr=1e-3, batch_size=16,
                                 local_epochs=1, device=device)

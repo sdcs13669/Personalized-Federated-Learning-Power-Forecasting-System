@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from fl_code.fed_core.accounting import adaptive_sigma_train
@@ -207,6 +209,42 @@ def test_adaptive_clip_partial_report_updates_with_available():
     results = _fake_results([("a", 0.1)], _tensors())
     strategy.aggregate_fit(1, results, [])
     assert strategy._clip_norm > 1.0
+
+
+def test_adaptive_clip_skips_nan_fraction():
+    # 一个客户端的 NaN fraction 不得污染等权均值/裁剪（min/max 会传播 NaN），
+    # 更新应仅使用另一客户端的有限值
+    strategy = AuditFedAvg(task=_task({"dp_adaptive_clip": True,
+                                       "dp_clip_lr": 0.1,
+                                       "dp_clip_target_quantile": 0.5}),
+                           state_keys=list(build_tcn(TCNConfig()).state_dict()))
+    assert strategy._clip_norm == 1.0
+    results = _fake_results([("a", float("nan")), ("b", 0.1)], _tensors())
+    strategy.aggregate_fit(1, results, [])
+    assert strategy._clip_norm > 1.0  # 仅由 b 的 0.1 < τ 驱动，C 增大
+    assert math.isfinite(strategy._clip_norm)
+
+
+def test_adaptive_clip_skips_inf_fraction():
+    # 同理，+inf 也必须被跳过而不是进入 min/max clamp
+    strategy = AuditFedAvg(task=_task({"dp_adaptive_clip": True,
+                                       "dp_clip_lr": 0.1,
+                                       "dp_clip_target_quantile": 0.5}),
+                           state_keys=list(build_tcn(TCNConfig()).state_dict()))
+    results = _fake_results([("a", float("inf")), ("b", 0.9)], _tensors())
+    strategy.aggregate_fit(1, results, [])
+    assert strategy._clip_norm < 1.0  # 仅由 b 的 0.9 > τ 驱动，C 缩小
+    assert math.isfinite(strategy._clip_norm)
+
+
+def test_adaptive_clip_all_nan_keeps_norm():
+    # 全部非有限 → 无有效上报，跳过更新，C 不变
+    strategy = AuditFedAvg(task=_task({"dp_adaptive_clip": True}),
+                           state_keys=list(build_tcn(TCNConfig()).state_dict()))
+    results = _fake_results([("a", float("nan")), ("b", float("nan"))],
+                            _tensors())
+    strategy.aggregate_fit(1, results, [])
+    assert strategy._clip_norm == 1.0
 
 
 def test_adaptive_clip_disabled_passes_no_dp_keys():

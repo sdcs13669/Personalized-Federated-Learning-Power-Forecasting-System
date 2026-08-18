@@ -66,6 +66,32 @@ def test_plain_round_clip_fraction_none():
     assert result["clip_fraction"] is None
 
 
+def test_fit_non_adaptive_dp_round_omits_clip_fraction():
+    """固定裁剪模式（config 无 dp_adaptive_clip）下，原始裁剪比例不得以
+    dpfedavg_clip_fraction 指标离开客户端。"""
+    from fl_code.fed_core.client_core import FedClient
+
+    cache = load_client_cache("steel_ind_0", stride=6, max_seqs=1)
+    keys = list(build_tcn(TCNConfig()).state_dict().keys())
+    client = FedClient(cache, keys, {"lr": 0.001, "batch_size": 16,
+                                     "local_epochs": 1, "device": "cpu",
+                                     "rounds": 2, "budget_path": None})
+    tensors = client.get_parameters({})
+    # uniform 固定裁剪（无 dp_adaptive_clip）
+    _, _, m_uniform = client.fit(
+        tensors, {"dp_mode": "uniform", "dp_clip": 1.0, "dp_delta": 1e-5,
+                  "dp_sigma": 1.0, "server_round": 1, "rounds": 2})
+    assert "dpfedavg_clip_fraction" not in m_uniform
+    assert "eps" in m_uniform and "sigma" in m_uniform
+    # per_client 固定裁剪（无 dp_adaptive_clip）
+    _, _, m_per_client = client.fit(
+        tensors, {"dp_mode": "per_client", "dp_clip": 1.0,
+                  "dp_delta": 1e-5, "dp_target_epsilon": 7.5,
+                  "server_round": 1, "rounds": 2})
+    assert "dpfedavg_clip_fraction" not in m_per_client
+    assert "eps" in m_per_client and "sigma" in m_per_client
+
+
 def test_fit_adaptive_mode_reports_noised_fraction(monkeypatch):
     from fl_code.fed_core.client_core import FedClient
 

@@ -249,7 +249,7 @@ class FedClient(NumPyClient):
             metrics["eps"] = float(result["eps"])
         if result["sigma"] is not None:
             metrics["sigma"] = float(result["sigma"])
-        if result["clip_fraction"] is not None:
+        if adaptive and result["clip_fraction"] is not None:
             # Noised locally so the untrusted server never sees the raw
             # statistic; clipping to [0,1] is post-processing.
             sigma_c = float(config.get("dpfedavg_clip_count_noise") or 0.0)

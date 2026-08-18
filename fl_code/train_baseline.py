@@ -259,6 +259,10 @@ def main(args: argparse.Namespace):
                      else None),
         "dp_target_epsilon": (float(args.dp_epsilon)
                               if args.dp_epsilon is not None else None),
+        "dp_adaptive_clip": args.dp_adaptive_clip,
+        "dp_clip_lr": args.dp_clip_lr,
+        "dp_clip_target_quantile": args.dp_clip_target_quantile,
+        "dp_clip_count_noise": args.dp_clip_count_noise,
     }
     task = {
         "name": f"baseline_{'dp' if dp_info else 'nodp'}",
@@ -342,7 +346,8 @@ def main(args: argparse.Namespace):
 # CLI
 # ============================================================================
 
-if __name__ == "__main__":
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse CLI arguments (testable: takes argv instead of reading sys.argv)."""
     parser = argparse.ArgumentParser(
         description="Phase 2: FedAvg GlobalTCN Baseline Training "
                     "(flwr simulation, ray backend)",
@@ -389,9 +394,26 @@ if __name__ == "__main__":
                              "(default: 1.0)")
     parser.add_argument("--dp-delta", type=float, default=1e-5,
                         help="DP delta for the (ε, δ) budget (default: 1e-5)")
-    args = parser.parse_args()
+    parser.add_argument("--dp-adaptive-clip", action="store_true",
+                        help="Adaptive clipping (Andrew et al. 2021); "
+                             "requires --dp-epsilon")
+    parser.add_argument("--dp-clip-lr", type=float, default=0.2,
+                        help="Adaptive clip learning rate eta (default: 0.2)")
+    parser.add_argument("--dp-clip-target-quantile", type=float, default=0.5,
+                        help="Target clip fraction tau (default: 0.5)")
+    parser.add_argument("--dp-clip-count-noise", type=float, default=0.5,
+                        help="Clip-count noise multiplier sigma_c "
+                             "(default: 0.5; must be > sigma/2)")
+    args = parser.parse_args(argv)
 
     if args.dp_noise is not None and args.dp_epsilon is not None:
         parser.error("--dp-noise and --dp-epsilon are mutually exclusive")
 
-    main(args)
+    if args.dp_adaptive_clip and args.dp_epsilon is None:
+        parser.error("--dp-adaptive-clip requires --dp-epsilon "
+                     "(per-client DP mode)")
+    return args
+
+
+if __name__ == "__main__":
+    main(_parse_args())

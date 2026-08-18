@@ -233,3 +233,28 @@ def test_adaptive_clip_enabled_passes_clip_keys_and_audits_norm():
     results = _fake_results([("a", 0.9), ("b", 0.9)], _tensors())
     strategy.aggregate_fit(1, results, [])
     assert strategy.audit_rows[-1]["clip_norm"] == round(1.0, 6)
+
+
+# ---------------------------------------------------------------------------
+# Task 5: train_baseline CLI 参数透传与校验
+# ---------------------------------------------------------------------------
+import sys
+
+import fl_code.train_baseline as tb
+
+
+def test_adaptive_clip_requires_dp_epsilon(monkeypatch):
+    called = []
+
+    # Patching the class-level `error` binds it as a method, so the fake
+    # must accept the parser instance as the first positional arg.
+    def fake_parser_error(self, msg):
+        called.append(msg)
+        raise SystemExit(msg)
+
+    monkeypatch.setattr(tb.argparse.ArgumentParser, "error",
+                        fake_parser_error)
+    argv = ["--dp-adaptive-clip", "--dp-clip-count-noise", "0.5"]
+    with pytest.raises(SystemExit):
+        tb.main(tb._parse_args(argv))
+    assert called, "expected parser.error to fire without --dp-epsilon"

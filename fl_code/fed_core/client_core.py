@@ -8,7 +8,9 @@ import torch
 from flwr.client import NumPyClient
 from torch.utils.data import DataLoader
 
-from fl_code.fed_core.accounting import dp_epsilon, sigma_for_epsilon
+from fl_code.fed_core.accounting import (
+    dp_epsilon, sigma_for_epsilon, adaptive_sigma_train,
+)
 from fl_code.fed_core.params import state_dict_to_tensors, tensors_to_state_dict
 from fl_code.models import TCNConfig, build_tcn
 from fl_code.train_eval_utils import train_epoch
@@ -66,7 +68,7 @@ def _train_plain(model, train_ds, lr, batch_size, local_epochs, device) -> float
 
 
 def _train_dp(model, train_ds, lr, batch_size, local_epochs, device,
-              noise_multiplier: float, clipping_norm: float) -> float:
+              noise_multiplier: float, clipping_norm: float) -> tuple[float, float]:
     # One process-wide params container so vmap's per-dict graph cache is
     # created once; synced to the model's current weights before each call.
     params = _get_fp_params(model)
@@ -76,10 +78,12 @@ def _train_dp(model, train_ds, lr, batch_size, local_epochs, device,
     # epoch INSIDE the loop.
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss = float("nan")
+    n_unclipped = 0
+    n_samples = 0
     for _ in range(local_epochs):
         loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
                             drop_last=False)
-        epoch_loss, n_samples = 0.0, 0
+        epoch_loss, epoch_samples = 0.0, 0
         for X, y, *_ in loader:
             X, y = X.to(device), y.to(device)
             params = _get_fp_params(model)  # sync container after optimizer.step
@@ -91,6 +95,9 @@ def _train_dp(model, train_ds, lr, batch_size, local_epochs, device,
                 for g in grads.values()))
             scale = (clipping_norm / norms.clamp_min(1e-12)).clamp_max(1.0).float()
             b = X.shape[0]
+            # 未裁剪样本（norm ≤ C，scale==1）占比——与 Flower 几何更新公式方向一致
+            n_unclipped += int((scale >= 1.0).sum().item())
+            n_samples += b
             for name, p in model.named_parameters():
                 g = grads[name]
                 p.grad = (g * scale.view(b, *([1] * (g.dim() - 1)))).sum(0) / b
@@ -100,14 +107,15 @@ def _train_dp(model, train_ds, lr, batch_size, local_epochs, device,
             with torch.no_grad():
                 out = model(X)
                 epoch_loss += (out - y).abs().sum().item()
-                n_samples += b
-        loss = epoch_loss / n_samples
+                epoch_samples += b
+        loss = epoch_loss / max(epoch_samples, 1)
     # Return CUDA segments to the allocator so the next round starts with a
     # clean slate (the container itself is kept for the process lifetime).
     del optimizer
     import gc; gc.collect()
     torch.cuda.empty_cache()
-    return loss
+    fraction = (n_unclipped / n_samples) if n_samples > 0 else 0.0
+    return loss, float(fraction)
 
 
 def train_client(tensors: list, keys: list[str], model, train_ds, n_train: int,
@@ -117,6 +125,8 @@ def train_client(tensors: list, keys: list[str], model, train_ds, n_train: int,
     model.load_state_dict(state)
     model.to(cfg["device"])
     sigma: float | None = None
+    loss: float = float("nan")
+    clip_fraction: float | None = None
     if dp is not None:
         if dp["mode"] == "per_client":
             sigma, _ = sigma_for_epsilon(
@@ -124,18 +134,23 @@ def train_client(tensors: list, keys: list[str], model, train_ds, n_train: int,
                 cfg["rounds"], dp["delta"], dp["target_epsilon"])
         else:
             sigma = float(dp["sigma"])
-        loss = _train_dp(model, train_ds, cfg["lr"], cfg["batch_size"],
-                         cfg["local_epochs"], cfg["device"], sigma,
-                         dp["clipping_norm"])
+        eps_sigma = sigma   # 会计锚点：预支修正前的目标 σ
+        if dp.get("adaptive_clip"):
+            sigma = adaptive_sigma_train(sigma, dp["clip_count_noise"])
+        loss, clip_fraction = _train_dp(
+            model, train_ds, cfg["lr"], cfg["batch_size"],
+            cfg["local_epochs"], cfg["device"], sigma,
+            dp["clipping_norm"])
     else:
         loss = _train_plain(model, train_ds, cfg["lr"], cfg["batch_size"],
                             cfg["local_epochs"], cfg["device"])
     eps = None
     if dp is not None:
         eps = dp_epsilon(n_train, cfg["batch_size"], cfg["local_epochs"],
-                         cfg["round"], sigma, dp["delta"])
+                         cfg["round"], eps_sigma, dp["delta"])
     return {"tensors": state_dict_to_tensors(model.state_dict()),
-            "n_train": n_train, "eps": eps, "sigma": sigma, "loss": loss}
+            "n_train": n_train, "eps": eps, "sigma": sigma,
+            "loss": loss, "clip_fraction": clip_fraction}
 
 
 class CidEchoClient(NumPyClient):

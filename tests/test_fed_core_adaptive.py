@@ -26,3 +26,41 @@ def test_monotone_in_count_noise():
     s2 = adaptive_sigma_train(1.0, 2.0)
     assert s2 < s1
     assert s2 > 1.0  # still above the target sigma (pre-pay never vanishes)
+
+
+import numpy as np
+import torch
+
+from fl_code.fed_core.client_core import train_client
+from fl_code.fed_core.data import load_client_cache
+from fl_code.models import TCNConfig, build_tcn
+
+
+def _dp_cfg(rounds=1):
+    return {"lr": 0.001, "batch_size": 16, "local_epochs": 1,
+            "device": "cpu", "round": 1, "rounds": rounds,
+            "budget_path": None}
+
+
+def test_dp_round_reports_clip_fraction():
+    cache = load_client_cache("steel_ind_0", stride=6, max_seqs=1)
+    model = build_tcn(TCNConfig())
+    keys = list(model.state_dict().keys())
+    dp = {"mode": "uniform", "sigma": 1.0, "clipping_norm": 1.0,
+          "delta": 1e-5, "target_epsilon": 0.0}
+    result = train_client(
+        [v.detach().numpy() for v in model.state_dict().values()],
+        keys, model, cache["train_ds"], cache["n_train"], _dp_cfg(), dp)
+    assert result["clip_fraction"] is not None
+    assert 0.0 <= result["clip_fraction"] <= 1.0
+    assert np.isfinite(result["clip_fraction"])
+
+
+def test_plain_round_clip_fraction_none():
+    cache = load_client_cache("steel_ind_0", stride=6, max_seqs=1)
+    model = build_tcn(TCNConfig())
+    keys = list(model.state_dict().keys())
+    result = train_client(
+        [v.detach().numpy() for v in model.state_dict().values()],
+        keys, model, cache["train_ds"], cache["n_train"], _dp_cfg(), None)
+    assert result["clip_fraction"] is None

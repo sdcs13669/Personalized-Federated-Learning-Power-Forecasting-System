@@ -114,6 +114,7 @@ def _run_flwr_server(task_dict: dict, participants: list[dict],
                     dropped=json.dumps(row["dropped"]),
                     loss=row.get("loss"),
                     client_losses=json.dumps(row.get("client_losses", {})),
+                    clip_norm=row.get("clip_norm"),
                     finished_at=datetime.utcnow(),
                 )
                 db.add(audit)

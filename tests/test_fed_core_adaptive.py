@@ -64,3 +64,26 @@ def test_plain_round_clip_fraction_none():
         [v.detach().numpy() for v in model.state_dict().values()],
         keys, model, cache["train_ds"], cache["n_train"], _dp_cfg(), None)
     assert result["clip_fraction"] is None
+
+
+def test_fit_adaptive_mode_reports_noised_fraction(monkeypatch):
+    from fl_code.fed_core.client_core import FedClient
+
+    cache = load_client_cache("steel_ind_0", stride=6, max_seqs=1)
+    client = FedClient(cache, list(build_tcn(TCNConfig()).state_dict().keys()),
+                       {"lr": 0.001, "batch_size": 16, "local_epochs": 1,
+                        "device": "cpu", "round": 1, "rounds": 2,
+                        "budget_path": None})
+    config = {"dp_mode": "per_client", "dp_clip": 1.0, "dp_delta": 1e-5,
+              "dp_target_epsilon": 7.5, "dp_sigma": None,
+              "server_round": 1, "rounds": 2,
+              "dpfedavg_clip_norm": 1.0,
+              "dpfedavg_clip_count_noise": 1.0,
+              "dp_adaptive_clip": True}
+    model = build_tcn(TCNConfig())
+    tensors = [v.detach().numpy() for v in model.state_dict().values()]
+    tensors, n, metrics = client.fit(tensors, config)
+    assert "dpfedavg_clip_fraction" in metrics
+    assert 0.0 <= metrics["dpfedavg_clip_fraction"] <= 1.0
+    assert "eps" in metrics
+    assert "sigma" in metrics

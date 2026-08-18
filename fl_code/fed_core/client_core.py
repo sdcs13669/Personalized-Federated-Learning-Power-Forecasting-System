@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import torch
 from flwr.client import NumPyClient
 from torch.utils.data import DataLoader
@@ -192,6 +193,7 @@ class FedClient(NumPyClient):
 
     def fit(self, parameters, config):
         dp = None
+        adaptive = bool(config.get("dp_adaptive_clip", False))
         if config.get("dp_mode") not in (None, "none", ""):
             if config["dp_mode"] == "per_client":
                 # σ depends only on (n, batch, epochs, rounds, δ, ε) — all
@@ -208,16 +210,24 @@ class FedClient(NumPyClient):
                 # ε/loss math does not depend on the mode field (the per_client
                 # branch is kept for direct callers).
                 dp = {"mode": "uniform",
-                      "clipping_norm": float(config["dp_clip"]),
+                      # 自适应模式下裁剪界来自服务端每轮下发，固定模式用任务级 dp_clip
+                      "clipping_norm": float(
+                          config.get("dpfedavg_clip_norm") or config["dp_clip"]),
                       "delta": float(config["dp_delta"]),
                       "sigma": self._sigma_cache,
-                      "target_epsilon": float(config["dp_target_epsilon"])}
+                      "target_epsilon": float(config["dp_target_epsilon"]),
+                      "adaptive_clip": adaptive,
+                      "clip_count_noise": float(
+                          config.get("dpfedavg_clip_count_noise") or 0.0)}
             else:
                 dp = {"mode": config["dp_mode"],
                       "clipping_norm": float(config["dp_clip"]),
                       "delta": float(config["dp_delta"]),
                       "sigma": float(config.get("dp_sigma") or 0.0),
-                      "target_epsilon": float(config.get("dp_target_epsilon") or 0.0)}
+                      "target_epsilon": float(config.get("dp_target_epsilon") or 0.0),
+                      "adaptive_clip": adaptive,
+                      "clip_count_noise": float(
+                          config.get("dpfedavg_clip_count_noise") or 0.0)}
         round_cfg = {**self.cfg,
                      "round": int(config["server_round"]),
                      "rounds": int(config["rounds"])}
@@ -237,6 +247,17 @@ class FedClient(NumPyClient):
         metrics = {"loss": float(result["loss"])}
         if result["eps"] is not None:
             metrics["eps"] = float(result["eps"])
+        if result["sigma"] is not None:
+            metrics["sigma"] = float(result["sigma"])
+        if result["clip_fraction"] is not None:
+            # Noised locally so the untrusted server never sees the raw
+            # statistic; clipping to [0,1] is post-processing.
+            sigma_c = float(config.get("dpfedavg_clip_count_noise") or 0.0)
+            f = result["clip_fraction"]
+            if sigma_c > 0:
+                f = float(np.clip(
+                    f + np.random.normal(0.0, sigma_c), 0.0, 1.0))
+            metrics["dpfedavg_clip_fraction"] = f
         return (result["tensors"], result["n_train"], metrics)
 
     def evaluate(self, parameters, config):

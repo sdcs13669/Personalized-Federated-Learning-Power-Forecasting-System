@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +37,15 @@ class AuditFedAvg(FedAvg):
         ckpt_dir = task.get("checkpoint_dir")
         if ckpt_dir:
             Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
+        # Adaptive clipping (Andrew et al. 2021) state.  Off unless the task
+        # opts in via cfg["dp_adaptive_clip"]; when off, configure_fit and
+        # aggregate_fit behave exactly as before.
+        cfg = task.get("cfg", {})
+        self.adaptive_clip = bool(cfg.get("dp_adaptive_clip", False))
+        self._clip_norm = float(cfg.get("dp_clip", 1.0) or 1.0)
+        self.clip_lr = float(cfg.get("dp_clip_lr", 0.2))
+        self.clip_target = float(cfg.get("dp_clip_target_quantile", 0.5))
+        self.clip_count_noise = float(cfg.get("dp_clip_count_noise", 0.5))
 
     def configure_fit(self, server_round, parameters, client_manager):
         cfg = {**self.task["cfg"],
@@ -44,6 +54,9 @@ class AuditFedAvg(FedAvg):
         # flwr ConfigRecord rejects None values; FedClient reads missing
         # keys via .get(...) or 0.0, so dropping None keys is lossless.
         cfg = {k: v for k, v in cfg.items() if v is not None}
+        if self.adaptive_clip:
+            cfg["dpfedavg_clip_norm"] = self._clip_norm
+            cfg["dpfedavg_clip_count_noise"] = self.clip_count_noise
         return [(client, FitIns(parameters, cfg))
                 for client in client_manager.all().values()]
 
@@ -82,8 +95,13 @@ class AuditFedAvg(FedAvg):
             "client_losses": client_losses,
             "finished_at": datetime.now().isoformat(timespec="seconds"),
         }
+        if self.adaptive_clip:
+            # Pre-update bound: the bound that was actually used this round.
+            row["clip_norm"] = round(self._clip_norm, 6)
         self.audit_rows.append(row)
         self._write_audit()
+        if self.adaptive_clip:
+            self._update_clip_norm(results)
         if params is not None:
             self._last_parameters = parameters_to_ndarrays(params)
             ckpt_dir = self.task.get("checkpoint_dir")
@@ -95,6 +113,26 @@ class AuditFedAvg(FedAvg):
         if self.on_round_done is not None:
             self.on_round_done(row)
         return params, {}
+
+    def _update_clip_norm(self, results) -> None:
+        """Geometric update (Andrew et al. 2021): C ← C·exp(−η(f̃−τ)).
+
+        f̃ = equal-weight average of the noised per-client UNCLIPPED-sample
+        fractions (semantics matches Flower's formula direction: f̃>τ means
+        most samples are within the bound → C shrinks).  Clients that did
+        not report are skipped; no update when nobody reported.
+        """
+        fractions = []
+        for proxy, res in results:
+            f = res.metrics.get("dpfedavg_clip_fraction")
+            if f is not None:
+                fractions.append(float(f))
+        if not fractions:
+            return
+        f_avg = sum(fractions) / len(fractions)
+        new_norm = self._clip_norm * math.exp(
+            -self.clip_lr * (f_avg - self.clip_target))
+        self._clip_norm = float(min(max(new_norm, 1e-4), 1e4))
 
     def _write_audit(self) -> None:
         audit_path = self.task.get("audit_path")

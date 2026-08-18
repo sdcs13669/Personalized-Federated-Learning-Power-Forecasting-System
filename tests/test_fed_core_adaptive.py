@@ -113,3 +113,123 @@ def test_fit_adaptive_mode_reports_noised_fraction(monkeypatch):
     assert 0.0 <= metrics["dpfedavg_clip_fraction"] <= 1.0
     assert "eps" in metrics
     assert "sigma" in metrics
+
+
+# ---------------------------------------------------------------------------
+# Task 4: server-side adaptive clip state + geometric update (AuditFedAvg)
+# ---------------------------------------------------------------------------
+from flwr.common import Code, FitRes, Status, ndarrays_to_parameters
+
+from fl_code.fed_core.server_core import AuditFedAvg
+
+
+class _Proxy:
+    def __init__(self, cid):
+        self.cid = cid
+
+
+def _fake_results(fractions: list[tuple[str, float]], tensors):
+    """[(cid, noised_fraction)] → [(proxy, FitRes)]，用于 aggregate_fit。"""
+    results = []
+    for cid, f in fractions:
+        results.append((_Proxy(cid), FitRes(
+            status=Status(code=Code.OK, message=""),
+            parameters=ndarrays_to_parameters(tensors),
+            num_examples=10,
+            metrics={"cid": cid, "loss": 1.0,
+                     "dpfedavg_clip_fraction": f})))
+    return results
+
+
+def _tensors():
+    model = build_tcn(TCNConfig())
+    return [v.detach().numpy() for v in model.state_dict().values()]
+
+
+def _task(cfg_extra=None, expected=("a", "b")):
+    cfg = {"lr": 0.001, "batch_size": 16, "local_epochs": 1,
+           "dp_mode": "per_client", "dp_clip": 1.0, "dp_delta": 1e-5,
+           "dp_sigma": None, "dp_target_epsilon": 7.5}
+    cfg.update(cfg_extra or {})
+    return {"name": "t", "rounds": 3, "round_timeout": None,
+            "checkpoint_dir": None, "audit_path": None,
+            "expected_clients": list(expected), "deliver_model": False,
+            "started_at": None, "cfg": cfg}
+
+
+class _DummyClientManager:
+    def all(self):
+        return {"0": _Proxy("0")}
+
+
+def test_adaptive_clip_shrinks_when_fraction_above_target():
+    strategy = AuditFedAvg(task=_task({"dp_adaptive_clip": True,
+                                       "dp_clip_lr": 0.1,
+                                       "dp_clip_target_quantile": 0.5}),
+                           state_keys=list(build_tcn(TCNConfig()).state_dict()))
+    assert strategy._clip_norm == 1.0
+    # 未裁剪比例 0.9 > τ=0.5（多数样本在界内，C 偏大）→ C 应缩小
+    results = _fake_results([("a", 0.9), ("b", 0.9)], _tensors())
+    strategy.aggregate_fit(1, results, [])
+    assert strategy._clip_norm < 1.0
+
+
+def test_adaptive_clip_grows_when_fraction_below_target():
+    strategy = AuditFedAvg(task=_task({"dp_adaptive_clip": True,
+                                       "dp_clip_lr": 0.1,
+                                       "dp_clip_target_quantile": 0.5}),
+                           state_keys=list(build_tcn(TCNConfig()).state_dict()))
+    # 未裁剪比例 0.1 < τ=0.5（多数样本被裁，C 偏小）→ C 应增大
+    results = _fake_results([("a", 0.1), ("b", 0.1)], _tensors())
+    strategy.aggregate_fit(1, results, [])
+    assert strategy._clip_norm > 1.0
+
+
+def test_adaptive_clip_no_fraction_keeps_norm():
+    # 无客户端上报 fraction → 跳过更新，C 不变
+    strategy = AuditFedAvg(task=_task({"dp_adaptive_clip": True}),
+                           state_keys=list(build_tcn(TCNConfig()).state_dict()))
+    proxy = _Proxy("a")
+    res = FitRes(status=Status(code=Code.OK, message=""),
+                 parameters=ndarrays_to_parameters(_tensors()),
+                 num_examples=10,
+                 metrics={"cid": "a", "loss": 1.0})
+    strategy.aggregate_fit(1, [(proxy, res)], [])
+    assert strategy._clip_norm == 1.0
+
+
+def test_adaptive_clip_partial_report_updates_with_available():
+    # 部分客户端上报 → 仅统计上报者（设计 §6 降级路径）
+    strategy = AuditFedAvg(task=_task({"dp_adaptive_clip": True,
+                                       "dp_clip_lr": 0.1,
+                                       "dp_clip_target_quantile": 0.5}),
+                           state_keys=list(build_tcn(TCNConfig()).state_dict()))
+    results = _fake_results([("a", 0.1)], _tensors())
+    strategy.aggregate_fit(1, results, [])
+    assert strategy._clip_norm > 1.0
+
+
+def test_adaptive_clip_disabled_passes_no_dp_keys():
+    strategy = AuditFedAvg(task=_task(),  # 默认无 dp_adaptive_clip
+                           state_keys=list(build_tcn(TCNConfig()).state_dict()))
+    from flwr.common import FitIns
+    ins = strategy.configure_fit(1, ndarrays_to_parameters(_tensors()),
+                                 _DummyClientManager())
+    cfg = dict(ins[0][1].config)
+    assert "dpfedavg_clip_norm" not in cfg
+
+
+def test_adaptive_clip_enabled_passes_clip_keys_and_audits_norm():
+    strategy = AuditFedAvg(task=_task({"dp_adaptive_clip": True,
+                                       "dp_clip_lr": 0.1,
+                                       "dp_clip_target_quantile": 0.5}),
+                           state_keys=list(build_tcn(TCNConfig()).state_dict()))
+    from flwr.common import FitIns
+    ins = strategy.configure_fit(1, ndarrays_to_parameters(_tensors()),
+                                 _DummyClientManager())
+    cfg = dict(ins[0][1].config)
+    assert cfg["dpfedavg_clip_norm"] == 1.0
+    assert cfg["dpfedavg_clip_count_noise"] == 0.5
+    results = _fake_results([("a", 0.9), ("b", 0.9)], _tensors())
+    strategy.aggregate_fit(1, results, [])
+    assert strategy.audit_rows[-1]["clip_norm"] == round(1.0, 6)

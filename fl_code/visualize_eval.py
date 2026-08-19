@@ -3,12 +3,15 @@
 Workflow:
   1. pick a client (from ``client_config.yaml``)
   2. pick one or more load sequences
-  3. pick a model — two-stage selection, auto-discovered under the baseline
-     root (default fl_code/baseline_outputs):
-       - first the family: nodp / dp / dp+rc (each shown when available)
-       - when dp+rc is selected, an extra RC-type menu (mlp / lstm / tcn)
-         appears, listing the Corrector checkpoints found for the client
-         under fl_code/personalized_outputs/<rc_type>/
+  3. pick a model — auto-discovered under the baseline root (default
+     fl_code/baseline_outputs):
+       - family: nodp / dp / dp+rc (each shown when available)
+       - privacy budget ε: enabled only for dp / dp+rc, listing the budgets
+         found under baseline_outputs/dp/epsilon-*/
+       - RC type (mlp / lstm / tcn): enabled only for dp+rc, listing the
+         Corrector checkpoints for the client under
+         personalized_outputs/epsilon-<ε>/<rc_type>/ (same budget as the
+         dp global model)
   4. rolling forecast; predictions are **de-normalised** back to physical
      units and plotted against the actuals for the first 7 days of the test
      split (with Corrector: P10/P50/P90 curves + 80% CI band)
@@ -196,9 +199,16 @@ class EvalVisualizer:
         ttk.Label(mid, text="Model:").pack(side="left")
         self.model_var = tk.StringVar()
         self.model_cb = ttk.Combobox(mid, textvariable=self.model_var,
-                                     state="readonly", width=12)
+                                     state="readonly", width=10)
         self.model_cb.pack(side="left", padx=6)
         self.model_cb.bind("<<ComboboxSelected>>", self._on_model_selected)
+
+        ttk.Label(mid, text="Privacy ε:").pack(side="left", padx=(10, 0))
+        self.eps_var = tk.StringVar()
+        self.eps_cb = ttk.Combobox(mid, textvariable=self.eps_var,
+                                   state="disabled", width=8)
+        self.eps_cb.pack(side="left", padx=6)
+        self.eps_cb.bind("<<ComboboxSelected>>", self._on_eps_selected)
 
         ttk.Label(mid, text="RC type:").pack(side="left", padx=(10, 0))
         self.rc_var = tk.StringVar()
@@ -222,29 +232,49 @@ class EvalVisualizer:
     # ---- model detection ----
 
     def _detect_models(self, cid: str, root: Path
-                       ) -> dict[str, Path | dict[str, Path]]:
+                       ) -> dict[str, Path | dict[str, Path | dict[str, Path]]]:
         """Auto-discover the model options under ``root``.
 
-        Returns ``{"nodp": Path|None, "dp": Path|None, "dp+rc": {rc_type: Path}}``:
-        nodp/dp are the latest checkpoints per variant; ``dp+rc`` maps rc type
-        to the Corrector path found under ``PERSONALIZED_DIR/<rc_type>/``
-        (``corrector_{cid}.pt``).
+        Returns ``{"nodp": Path|None, "dp": {ε: Path}, "dp+rc": {ε: {rc_type: Path}}}``:
+        nodp is the latest nodp checkpoint; ``dp`` maps each privacy budget
+        found under ``root/dp/epsilon-*/`` to its latest round checkpoint
+        (empty budget dirs are skipped); ``dp+rc`` maps a budget to the
+        Corrector paths for the client under
+        ``PERSONALIZED_DIR/epsilon-<ε>/<rc_type>/`` — only for budgets that
+        also have a dp global checkpoint.
         """
-        def latest(sub: str) -> Path | None:
-            ckpts = sorted((root / sub / "checkpoints").glob("round_*.pt"),
+        def latest(cp_dir: Path) -> Path | None:
+            ckpts = sorted(cp_dir.glob("round_*.pt"),
                            key=lambda p: int(p.stem.split("_")[-1]))
             return ckpts[-1] if ckpts else None
 
-        detected: dict[str, Path | dict[str, Path]] = {
-            "nodp": latest("nodp"),
-            "dp": latest("dp"),
+        def eps_key(d: Path) -> float:
+            try:
+                return float(d.name.split("-", 1)[1])
+            except (IndexError, ValueError):
+                return float("inf")
+
+        detected: dict[str, Path | dict[str, Path | dict[str, Path]]] = {
+            "nodp": latest(root / "nodp" / "checkpoints"),
+            "dp": {},
             "dp+rc": {},
         }
-        if detected["dp"] is not None:
-            for rc_type in ("mlp", "lstm", "tcn"):
-                corr = PERSONALIZED_DIR / rc_type / f"corrector_{cid}.pt"
-                if corr.exists():
-                    detected["dp+rc"][rc_type] = corr
+        dp_root = root / "dp"
+        if dp_root.is_dir():
+            for edir in sorted(dp_root.glob("epsilon-*"), key=eps_key):
+                ckpt = latest(edir / "checkpoints")
+                if ckpt is None:
+                    continue
+                eps = edir.name.split("-", 1)[1]
+                detected["dp"][eps] = ckpt
+                corr: dict[str, Path] = {}
+                p_eps = PERSONALIZED_DIR / f"epsilon-{eps}"
+                for rc_type in ("mlp", "lstm", "tcn"):
+                    cp = p_eps / rc_type / f"corrector_{cid}.pt"
+                    if cp.exists():
+                        corr[rc_type] = cp
+                if corr:
+                    detected["dp+rc"][eps] = corr
         return detected
 
     def _scan_models(self) -> list[str]:
@@ -255,11 +285,39 @@ class EvalVisualizer:
                     if self.detected.get(f)]
         self.model_cb["values"] = families
         self.model_var.set(families[0] if families else "")
-        rc_types = list(self.detected["dp+rc"])
+        self._refresh_eps_options()
+        self._refresh_rc_options()
+        return families
+
+    def _eps_values(self) -> list[str]:
+        """ε budgets selectable for the current family."""
+        family = self.model_var.get()
+        if family == "dp":
+            return sorted(self.detected["dp"], key=float)
+        if family == "dp+rc":
+            return sorted(self.detected["dp+rc"], key=float)
+        return []
+
+    def _refresh_eps_options(self):
+        """Populate and enable the ε menu for the current family."""
+        eps_values = self._eps_values()
+        self.eps_cb["values"] = eps_values
+        if eps_values:
+            self.eps_var.set(eps_values[0])
+            self.eps_cb["state"] = "readonly"
+        else:
+            self.eps_var.set("")
+            self.eps_cb["state"] = "disabled"
+
+    def _refresh_rc_options(self):
+        """Populate the RC-type menu for the current family + ε."""
+        family = self.model_var.get()
+        eps = self.eps_var.get()
+        rc_types = (sorted(self.detected["dp+rc"].get(eps, {}))
+                    if family == "dp+rc" and eps else [])
         self.rc_cb["values"] = rc_types
         self.rc_var.set(rc_types[0] if rc_types else "")
         self._update_rc_state()
-        return families
 
     def _update_rc_state(self):
         """Enable the RC-type menu only when the dp+rc family is selected."""
@@ -269,7 +327,11 @@ class EvalVisualizer:
             self.rc_cb["state"] = "disabled"
 
     def _on_model_selected(self, _event=None):
-        self._update_rc_state()
+        self._refresh_eps_options()
+        self._refresh_rc_options()
+
+    def _on_eps_selected(self, _event=None):
+        self._refresh_rc_options()
 
     def _on_root_changed(self, _event=None):
         if self.current is None:
@@ -338,7 +400,7 @@ class EvalVisualizer:
 
             self._scan_models()
 
-            n_corr = len(self.detected["dp+rc"])
+            n_corr = sum(len(v) for v in self.detected["dp+rc"].values())
             self.status_var.set(
                 f"{cid}: {len(seqs)} sequences, {n_corr} Corrector(s) "
                 f"found | {info.get('valid_days', '?')} valid days")
@@ -370,18 +432,22 @@ class EvalVisualizer:
             return
 
         family = self.model_var.get()
-        if family not in self.detected:
+        if family == "dp+rc":
+            ckpt_path = self.detected["dp"].get(self.eps_var.get())
+            corr_path = (self.detected["dp+rc"].get(self.eps_var.get(), {})
+                         .get(self.rc_var.get()))
+        elif family == "dp":
+            ckpt_path = self.detected["dp"].get(self.eps_var.get())
+            corr_path = None
+        else:
+            ckpt_path = self.detected.get("nodp")
+            corr_path = None
+        if ckpt_path is None:
             messagebox.showwarning(
                 "No model",
                 "No Phase 2 checkpoint found. Run train_baseline.py first, "
                 "or check the baseline root path.")
             return
-        if family == "dp+rc":
-            ckpt_path = self.detected["dp"]          # dp+rc 用 DP 全局模型
-            corr_path = self.detected["dp+rc"].get(self.rc_var.get())
-        else:
-            ckpt_path = self.detected[family]
-            corr_path = None
         global_model = self._get_global_model(ckpt_path)
         try:
             corrector = (self._load_corrector(
@@ -396,8 +462,11 @@ class EvalVisualizer:
 
         self.fig.clear()
         axes = self.fig.subplots(len(sel), 1, sharex=True, squeeze=False)[:, 0]
+        eps_tag = (f" (ε={self.eps_var.get()})"
+                   if family != "nodp" and self.eps_var.get() else "")
         self.fig.suptitle(
-            f"{self.client_var.get()} — rolling forecast, first 7 days of test split",
+            f"{self.client_var.get()} — rolling forecast, first 7 days of "
+            f"test split{eps_tag}",
             fontsize=13)
 
         for ax, seq in zip(axes, sel):

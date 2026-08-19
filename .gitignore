@@ -7,12 +7,18 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.so
+.pytest_cache/
 
 #claude工作文件
 .claude
 CLAUDE.md
 fl_code/outputs/
 superpowers/
+.superpowers
+
+#测试文件
+tests/
+
 #pt模型
 *.pt
 

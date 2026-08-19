@@ -17,6 +17,9 @@ Usage::
     python -m fl_code.train_personalized --clients steel_ind_0 tetouan_city_0
     python -m fl_code.train_personalized --max-seqs 5 --epochs 20
     python -m fl_code.train_personalized --output-dir my_run      # custom output root
+    python -m fl_code.train_personalized --global-model fl_code/baseline_outputs/dp/checkpoints/round_030.pt 
+    --rc-type mlp 
+    --output-dir /root/Personalized-Federated-Learning-Power-Forecasting-System/fl_code/personalized_outputs/epsilon-3.5
 """
 
 from __future__ import annotations

@@ -17,7 +17,7 @@ superpowers/
 .superpowers
 
 #测试文件
-tests/
+test/
 
 #pt模型
 *.pt

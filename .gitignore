@@ -26,3 +26,4 @@ test/
 fl_code/baseline_outputs/
 fl_code/personalized_outputs/
 app/runs/
+.env

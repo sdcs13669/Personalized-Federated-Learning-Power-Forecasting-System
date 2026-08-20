@@ -23,11 +23,8 @@ Usage::
     python -m fl_code.train_baseline --rounds 30 --lr 0.001       # custom
     python -m fl_code.train_baseline --clients steel_ind_0 eld_ind_0  # subset
     python -m fl_code.train_baseline --max-seqs 5 --eval-seqs 3   # fast dev
-    python -m fl_code.train_baseline --rounds 30 --lr 0.001 --dp-epsilon 7.5 --dp-delta 1e-5  # per-client σᵢ (recommended)
-    --dp-adaptive-clip # optional adaptive clipping (Andrew et al. 2021)
-    --dp-clip-count-noise 1.0 # optional, must be > σ/2
-    --dp-clip-target-quantile 0.5 # target fraction of gradients to clip (default 0.5)
-    --dp-clip-target-lr 0.2 # learning rate for adaptive clip (default 0.2)
+    python -m fl_code.train_baseline --rounds 30 --lr 0.001 --dp-epsilon 7.5 --dp-delta 1e-5  
+    --dp-adaptive-clip --dp-clip-count-noise 1.  
     python -m fl_code.train_baseline --dp-noise 1.0 --dp-delta 1e-5     # uniform σ (ε printed)
     python -m fl_code.train_baseline --output-dir my_run            # custom output root
 """

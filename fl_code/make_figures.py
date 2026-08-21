@@ -32,7 +32,7 @@ CLIENT_ORDER = ["steel_ind_0", "tetouan_city_0", "tetouan_city_1", "tetouan_city
 DATASETS = [("steel_ind", 1), ("tetouan_city", 3), ("lcl_res", 2), ("eld_ind", 3)]
 
 # 语义色：nodp=红(基线), dp=蓝(隐私), dp+rc=绿(修正找回)——与交接文档统一
-C = {"nodp": "#d62728", "dp": "#1f77b4", "dp+rc": "#2ca02c"}
+C = {"nodp": "#C44E52", "dp": "#4C72B0", "dp+rc": "#55A868"}
 # 架构消融用中性灰阶 + best 复用 dp+rc 绿，避免与三模式语义色混淆
 ARCH_C = {"mlp": "#b4bdc7", "lstm": "#7d8b99", "tcn": "#d7dce1", "best": C["dp+rc"]}
 FOOT = "反归一化后（原始 kWh 单位）；WAPE = Σ|ŷ−y|/Σ|y|，9 客户端池化；dp+rc = 每客户端自选 best RC"

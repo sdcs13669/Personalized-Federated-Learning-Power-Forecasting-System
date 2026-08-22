@@ -517,6 +517,11 @@ async function loadTaskDetail(id) {
           <div class="stat"><div class="num" id="st-part">${task.participant_count}</div><div class="lbl">参与人数</div></div>
           <div class="stat"><div class="num" id="st-eps">${task.dp_epsilon ?? "无"}</div><div class="lbl">DP ε</div></div>
         </div>
+        ${App.mode === "client" ? `
+        <div style="margin:14px 0;">
+          <button onclick="doTrainRc(${task.id})">训练残差修正器（二阶段）</button>
+          <span style="color:var(--muted);font-size:12.5px;margin-left:10px;">在本地用 RC 残差修正器微调，上传 WAPE 与对比图</span>
+        </div>` : ""}
         <div class="grid2">
           <div class="card"><h4>每轮参与人数</h4><div id="ch-participants" class="chart"></div></div>
           <div class="card"><h4>参与热力图（绿=参与 红=掉线）</h4><div id="ch-heatmap" class="chart"></div></div>
@@ -615,4 +620,22 @@ function setChart(id, option) {
   }
   chart.setOption({ ...option, tooltip: { trigger: "axis" },
                     legend: { show: true, top: 0 } }, true);
+}
+
+// ===== 二阶段 RC 触发（Task 13，仅客户端模式）=====
+async function doTrainRc(taskId) {
+  try {
+    const r = await fetch("/local/rc", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_id: taskId }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || "RC 训练失败");
+    const has = (v) => v !== null && v !== undefined;
+    const hint = (has(d.wape_global) && has(d.wape_rc))
+      ? `RC 完成：WAPE ${d.wape_global}% → ${d.wape_rc}%`
+      : "RC 已提交，结果已上传到服务端";
+    showToast(hint);
+    loadTaskDetail(taskId);
+  } catch (e) { showToast(e.message, true); }
 }

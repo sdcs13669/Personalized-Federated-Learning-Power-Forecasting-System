@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from server.database import get_db
-from server.models import Task, User
+from server.models import Participant, Task, User
 from server.routers.auth import get_current_user_from_header
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -52,6 +52,7 @@ def _task_to_dict(task: Task, key: str | None = None) -> dict:
         "created_at": str(task.created_at) if task.created_at else None,
         "start_at": str(task.start_at) if task.start_at else None,
         "participant_count": len(task.participants) if task.participants else 0,
+        "current_round": task.audit_rounds[-1].round if task.audit_rounds else 0,
     }
     if key is not None:
         d["key"] = key
@@ -112,6 +113,30 @@ def list_tasks(
     """Square: list all recruiting tasks."""
     tasks = db.query(Task).filter(Task.status == "recruiting").all()
     return [_task_to_dict(t) for t in tasks]
+
+
+my_router = APIRouter(prefix="/api/my", tags=["tasks"])
+
+
+@my_router.get("/tasks")
+def my_tasks(
+    user: User = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Tasks the current user created or joined (Task 5)."""
+    created = db.query(Task).filter(Task.creator_id == user.id).all()
+    joined = [p.task for p in db.query(Participant)
+              .filter(Participant.user_id == user.id).all() if p.task]
+    seen, merged = set(), []
+    for t in created + joined:
+        if t.id in seen:
+            continue
+        seen.add(t.id)
+        d = _task_to_dict(t)
+        d["my_role"] = "creator" if t.creator_id == user.id else "participant"
+        merged.append(d)
+    merged.sort(key=lambda x: x["id"], reverse=True)
+    return merged
 
 
 @router.get("/{task_id}")

@@ -68,6 +68,12 @@ def get_current_user_from_header(
     return user
 
 
+def require_admin(user: User = Depends(get_current_user_from_header)) -> User:
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    return user
+
+
 @router.post("/register", response_model=TokenResponse)
 def register(req: AuthRequest, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.username == req.username).first()

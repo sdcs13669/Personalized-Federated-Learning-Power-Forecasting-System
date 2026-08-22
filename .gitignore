@@ -27,3 +27,7 @@ fl_code/baseline_outputs/
 fl_code/personalized_outputs/
 app/runs/
 .env
+
+#App 运行产物（不入库）
+data/fl_server.db
+app/data/

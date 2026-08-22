@@ -463,11 +463,156 @@ async function doStartTrain() {
 }
 
 function renderAdmin() {
-  document.getElementById("view").innerHTML =
-    `<div class="card"><h3>管理大屏</h3><p style="color:var(--muted);margin-top:8px;">该页面将在后续版本提供（Task 8）。</p></div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="card">
+      <h3 style="margin-bottom:12px;">管理大屏 - 全部任务</h3>
+      <table><thead><tr>
+        <th>ID</th><th>任务名</th><th>发起者</th><th>状态</th><th>轮次</th>
+        <th>参与</th><th>操作</th>
+      </tr></thead><tbody id="admin-rows"></tbody></table>
+    </div>`;
+  api("/api/tasks").then(tasks => {
+    const rows = document.getElementById("admin-rows");
+    if (!tasks.length) {
+      rows.innerHTML = `<tr><td colspan="7" class="empty-row">还没有任务</td></tr>`;
+      return;
+    }
+    rows.innerHTML = tasks.map(t => `
+      <tr>
+        <td>${t.id}</td><td>${t.name}</td><td>${t.creator}</td><td>${statusBadge(t.status)}</td>
+        <td>${t.current_round || 0}/${t.rounds}</td><td>${t.participant_count}</td>
+        <td><button class="secondary" onclick="location.hash='#/task/${t.id}'">进入大屏</button></td>
+      </tr>`).join("");
+  }).catch(e => showToast(e.message, true));
 }
 
+// ===== 任务详情大屏（Task 8：6 图 + 轮询刷新）=====
+const charts = {};
+
 function renderTaskDetail(id) {
-  document.getElementById("view").innerHTML =
-    `<div class="card"><h3>任务详情 #${id}</h3><p style="color:var(--muted);margin-top:8px;">该页面将在后续版本提供（Task 8/13）。</p></div>`;
+  document.getElementById("view").innerHTML = `
+    <button class="secondary" style="margin-bottom:12px;" onclick="location.hash='#/plaza'">返回</button>
+    <div id="detail-body">加载中...</div>`;
+  loadTaskDetail(id);
+  clearInterval(App.polling);
+  App.polling = setInterval(() => loadTaskDetail(id), 2500);
+}
+
+async function loadTaskDetail(id) {
+  try {
+    const [task, audit, rc] = await Promise.all([
+      api(`/api/tasks/${id}`),
+      api(`/api/tasks/${id}/audit`),
+      api(`/api/tasks/${id}/rc-results`).catch(() => []),
+    ]);
+    const body = document.getElementById("detail-body");
+    if (!body) return;
+    // 首次进入才重建 DOM，后续轮询只更新 stat + 图表（避免闪烁）
+    if (body.getAttribute("data-built") !== "1") {
+      body.setAttribute("data-built", "1");
+      body.innerHTML = `
+        <div class="stat-cards">
+          <div class="stat"><div class="num" id="st-status">${task.status}</div><div class="lbl">状态</div></div>
+          <div class="stat"><div class="num" id="st-round">${task.current_round || 0}/${task.rounds}</div><div class="lbl">轮次</div></div>
+          <div class="stat"><div class="num" id="st-part">${task.participant_count}</div><div class="lbl">参与人数</div></div>
+          <div class="stat"><div class="num" id="st-eps">${task.dp_epsilon ?? "无"}</div><div class="lbl">DP ε</div></div>
+        </div>
+        <div class="grid2">
+          <div class="card"><h4>每轮参与人数</h4><div id="ch-participants" class="chart"></div></div>
+          <div class="card"><h4>参与热力图（绿=参与 红=掉线）</h4><div id="ch-heatmap" class="chart"></div></div>
+          <div class="card"><h4>每客户端累计 ε</h4><div id="ch-eps" class="chart"></div></div>
+          <div class="card"><h4>全局 loss</h4><div id="ch-loss" class="chart"></div></div>
+          <div class="card"><h4>自适应裁剪阈值 C</h4><div id="ch-clip" class="chart"></div></div>
+          <div class="card"><h4>RC 结果（WAPE %）</h4><div id="ch-rc" class="chart"></div><div id="rc-imgs"></div></div>
+        </div>`;
+    } else {
+      const set = (nid, v) => { const el = document.getElementById(nid); if (el) el.textContent = v; };
+      set("st-status", task.status);
+      set("st-round", `${task.current_round || 0}/${task.rounds}`);
+      set("st-part", task.participant_count);
+      set("st-eps", task.dp_epsilon ?? "无");
+    }
+    renderCharts(audit, rc);
+  } catch (e) { showToast(e.message, true); }
+}
+
+function renderCharts(audit, rc) {
+  const rounds = audit.map(a => a.round);
+  // 1. 每轮参与人数
+  setChart("ch-participants", {
+    xAxis: { type: "category", data: rounds },
+    yAxis: { type: "value", minInterval: 1 },
+    series: [{ type: "line", data: audit.map(a => a.joined.length),
+               name: "实际参与", areaStyle: {} },
+             { type: "line", data: audit.map(a => a.expected.length),
+               name: "应参与", lineStyle: { type: "dashed" } }],
+  });
+  // 2. 参与热力图（绿=1 参与 / 红=0 掉线）
+  const clients = [...new Set(audit.flatMap(a => a.expected))];
+  const heat = [];
+  audit.forEach((a, ri) => {
+    clients.forEach((cid, ci) => {
+      if (a.expected.includes(cid)) {
+        heat.push([ri, ci, a.joined.includes(cid) ? 1 : 0]);
+      }
+    });
+  });
+  setChart("ch-heatmap", {
+    tooltip: {},
+    xAxis: { type: "category", data: rounds },
+    yAxis: { type: "category", data: clients },
+    visualMap: { min: 0, max: 1, show: false,
+                 inRange: { color: ["#e74c3c", "#2ca02c"] } },
+    series: [{ type: "heatmap", data: heat }],
+  });
+  // 3. 每客户端累计 ε
+  const epsSeries = clients.map(cid => ({
+    name: cid, type: "line",
+    data: audit.map((a, i) => Number((audit.slice(0, i + 1)
+      .reduce((s, x) => s + ((x.client_epsilons || {})[cid] || 0), 0)).toFixed(3))),
+  }));
+  setChart("ch-eps", {
+    xAxis: { type: "category", data: rounds },
+    yAxis: { type: "value", name: "累计 ε" },
+    series: epsSeries,
+  });
+  // 4. 全局 loss
+  setChart("ch-loss", {
+    xAxis: { type: "category", data: rounds },
+    yAxis: { type: "value" },
+    series: [{ type: "line", data: audit.map(a => a.loss),
+               name: "全局 loss", areaStyle: {} }],
+  });
+  // 5. 自适应裁剪阈值 C
+  setChart("ch-clip", {
+    xAxis: { type: "category", data: rounds },
+    yAxis: { type: "value" },
+    series: [{ type: "line", data: audit.map(a => a.clip_norm),
+               name: "C", step: "end" }],
+  });
+  // 6. RC WAPE 对比（全局 vs 全局+RC）
+  setChart("ch-rc", {
+    xAxis: { type: "category", data: rc.map(r => r.client_id) },
+    yAxis: { type: "value" },
+    series: [{ type: "bar", name: "全局模型", data: rc.map(r => r.wape_global) },
+             { type: "bar", name: "全局+RC", data: rc.map(r => r.wape_rc) }],
+  });
+  document.getElementById("rc-imgs").innerHTML = rc.map(r =>
+    r.png_url ? `<div style="margin-top:10px;"><b>${r.client_id}</b><br>
+      <img class="rc-img" src="${r.png_url}" alt="${r.client_id} 对比图"></div>` : ""
+  ).join("");
+}
+
+function setChart(id, option) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  let chart = charts[id];
+  if (!chart || chart.getDom() !== el) {
+    if (chart) chart.dispose();
+    chart = echarts.init(el);
+    charts[id] = chart;
+    window.addEventListener("resize", () => chart.resize());
+  }
+  chart.setOption({ ...option, tooltip: { trigger: "axis" },
+                    legend: { show: true, top: 0 } }, true);
 }

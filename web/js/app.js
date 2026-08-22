@@ -55,6 +55,7 @@ function dispatch(hash) {
   // 性能：离开登录页停止粒子动画；离开"我的任务"停止轮询
   if (parts[1] !== "login" && typeof stopParticleNet === "function") stopParticleNet();
   if (parts[1] !== "my" && App.agentPolling) { clearInterval(App.agentPolling); App.agentPolling = null; }
+  if (parts[1] !== "task" && App.polling) { clearInterval(App.polling); App.polling = null; }
   if (parts[1] === "plaza") renderPlaza();
   else if (parts[1] === "my") renderMyTasks();
   else if (parts[1] === "admin") renderAdmin();

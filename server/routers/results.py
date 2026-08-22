@@ -79,12 +79,12 @@ def get_audit(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # Check user is a participant or the creator
+    # Check user is a participant or the creator (admin may view any task)
     is_participant = db.query(Participant).filter(
         Participant.task_id == task_id,
         Participant.user_id == user.id,
     ).first()
-    if not is_participant and task.creator_id != user.id:
+    if not is_participant and task.creator_id != user.id and user.role != "admin":
         raise HTTPException(status_code=403, detail="Not a participant")
 
     rounds = db.query(AuditRound).filter(
@@ -98,6 +98,7 @@ def get_audit(
             "dropped": json.loads(r.dropped),
             "loss": r.loss,
             "client_losses": json.loads(r.client_losses) if r.client_losses else {},
+            "client_epsilons": json.loads(r.client_epsilons) if r.client_epsilons else {},
             "clip_norm": r.clip_norm,
             "finished_at": str(r.finished_at) if r.finished_at else None,
         }
@@ -188,7 +189,7 @@ def list_rc_results(
         Participant.task_id == task_id,
         Participant.user_id == user.id,
     ).first()
-    if not is_participant and task.creator_id != user.id:
+    if not is_participant and task.creator_id != user.id and user.role != "admin":
         raise HTTPException(status_code=403, detail="Not a participant")
     rows = db.query(RcResult).filter(RcResult.task_id == task_id).all()
     return [

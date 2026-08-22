@@ -53,6 +53,7 @@ def _task_to_dict(task: Task, key: str | None = None) -> dict:
         "created_at": str(task.created_at) if task.created_at else None,
         "start_at": str(task.start_at) if task.start_at else None,
         "participant_count": len(task.participants) if task.participants else 0,
+        "current_round": task.audit_rounds[-1].round if task.audit_rounds else 0,
     }
     rounds = [r.round for r in task.audit_rounds] if task.audit_rounds else []
     d["current_round"] = max(rounds) if rounds else 0

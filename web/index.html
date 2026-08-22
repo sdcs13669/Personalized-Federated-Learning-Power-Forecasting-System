@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>联邦学习平台</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="vendor/echarts.min.js"></script>
+</head>
+<body>
+  <header id="topbar" class="hidden">
+    <span class="brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect width="24" height="24" rx="6" fill="url(#lg)"/>
+        <circle cx="7" cy="12" r="2.4" fill="#fff"/>
+        <circle cx="17" cy="7" r="2.4" fill="#fff"/>
+        <circle cx="17" cy="17" r="2.4" fill="#fff"/>
+        <path d="M9 11l6-3.2M9 13l6 3.2" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+        <defs><linearGradient id="lg" x1="0" y1="0" x2="24" y2="24"><stop stop-color="#c8f04a"/><stop offset="1" stop-color="#a8d53a"/></linearGradient></defs>
+      </svg>
+      联邦学习平台
+    </span>
+    <nav>
+      <a href="#/plaza">广场</a>
+      <a href="#/my" id="nav-mine" class="hidden">我的任务</a>
+      <a href="#/admin" id="nav-admin" class="hidden">管理大屏</a>
+    </nav>
+    <span id="user-label"></span>
+    <button id="logout-btn" class="hidden">退出</button>
+  </header>
+  <main id="view"></main>
+  <div id="modal" class="modal hidden"></div>
+  <script src="js/app.js"></script>
+  <script src="js/views.js"></script>
+</body>
+</html>

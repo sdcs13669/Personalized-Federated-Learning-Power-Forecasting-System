@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))  # 保证 `python app/agent.py` 运行时能 import app.*
 DEFAULT_WEB = ROOT / "web"
 CONFIG_PATH = Path(__file__).resolve().parent / "agent_config.json"
 DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -108,6 +109,18 @@ class LoginBody(BaseModel):
     password: str
 
 
+class CollectBody(BaseModel):
+    dataset_id: str
+
+
+class TrainBody(BaseModel):
+    grpc_addr: str
+
+
+class RcBody(BaseModel):
+    task_id: int
+
+
 def create_app(web_dir: str | None = None,
                server_url: str | None = None,
                config_path: Path | None = None) -> FastAPI:
@@ -165,33 +178,28 @@ def create_app(web_dir: str | None = None,
     def local_token():
         return {"token": token["value"]}
 
-    class CollectBody(BaseModel):
-        dataset_id: str
-
     @app.post("/local/collect")
     def local_collect(body: CollectBody):
-        from app.collector import collect_dataset
-        datasets = _fetch_datasets(cfg["server_url"], token["value"]) \
-            or DATASETS_FALLBACK
-        ds = next((d for d in datasets if d["id"] == body.dataset_id), None)
-        if ds is None:
-            return JSONResponse(status_code=404,
-                                content={"detail": "未知数据集"})
-        if ds.get("client_id") and cfg.get("client_id") and \
-                ds["client_id"] != cfg["client_id"]:
-            return JSONResponse(
-                status_code=400,
-                content={"detail": f"该数据源属于 {ds['client_id']}，"
-                                  f"与你的角色 {cfg.get('client_id')} 不匹配"})
         try:
+            from app.collector import collect_dataset
+            datasets = _fetch_datasets(cfg["server_url"], token["value"]) \
+                or DATASETS_FALLBACK
+            ds = next((d for d in datasets if d["id"] == body.dataset_id), None)
+            if ds is None:
+                return JSONResponse(status_code=404,
+                                    content={"detail": "未知数据集"})
+            if ds.get("client_id") and cfg.get("client_id") and \
+                    ds["client_id"] != cfg["client_id"]:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": f"该数据源属于 {ds['client_id']}，"
+                                      f"与你的角色 {cfg.get('client_id')} 不匹配"})
             info = collect_dataset(body.dataset_id, ds["url"], DATA_DIR,
                                    cfg.get("client_id", ""))
+            return info
         except Exception as e:
-            return JSONResponse(status_code=500, content={"detail": str(e)})
-        return info
-
-    class TrainBody(BaseModel):
-        grpc_addr: str
+            return JSONResponse(status_code=500,
+                                content={"detail": f"采集失败: {e}"})
 
     @app.post("/local/start")
     def local_start(body: TrainBody):
@@ -209,9 +217,6 @@ def create_app(web_dir: str | None = None,
     def local_train_status():
         from app.trainer import get_train_status
         return get_train_status()
-
-    class RcBody(BaseModel):
-        task_id: int
 
     @app.post("/local/rc")
     def local_rc(body: RcBody):
@@ -268,8 +273,13 @@ def create_app(web_dir: str | None = None,
         if method in ("POST", "PUT"):
             body = await request.body()
         headers = {"Content-Type": "application/json"}
+        # 优先透传前端携带的 Bearer（浏览器登录后请求带 token）；
+        # 没有时才用本地 /local/login 存储的 token。
+        auth = request.headers.get("authorization")
         t = token["value"]
-        if t:
+        if auth:
+            headers["Authorization"] = auth
+        elif t:
             headers["Authorization"] = "Bearer " + t
         url = cfg["server_url"] + "/api/" + path
         try:

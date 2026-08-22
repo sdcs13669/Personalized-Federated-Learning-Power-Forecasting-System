@@ -18,8 +18,8 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(Text, unique=True, nullable=False)
     password_hash = Column(Text, nullable=False)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow)
     role = Column(Text, default="user")
+    created_at = Column(TIMESTAMP, default=datetime.utcnow)
 
     created_tasks = relationship("Task", back_populates="creator")
     participations = relationship("Participant", back_populates="user")

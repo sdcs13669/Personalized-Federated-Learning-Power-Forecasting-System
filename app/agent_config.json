@@ -1,7 +1,7 @@
 {
-  "server_url": "http://127.0.0.1:59999",
-  "username": "u",
-  "password": "p",
+  "server_url": "http://127.0.0.1:8000",
+  "username": "",
+  "password": "",
   "client_id": "",
   "local_port": 9001
 }

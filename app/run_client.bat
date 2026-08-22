@@ -1,6 +1,8 @@
 @echo off
-rem 启动 client_agent（本地 Web 代理，端口 9001）
-rem Python 路径按机器环境修改：组长机器 D:\anoconda\envs\fl\python.exe
+title FL-Agent-9001
+rem Start local client agent (web proxy on port 9001)
+rem Double-click to run. Keep this window open while testing.
 cd /d %~dp0..
-D:\Miniconda\envs\power\python.exe app\agent.py
-start http://localhost:9001
+start "" http://localhost:9001
+D:\anaconda3\envs\ml\python.exe app\agent.py
+pause

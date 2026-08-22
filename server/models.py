@@ -19,6 +19,7 @@ class User(Base):
     username = Column(Text, unique=True, nullable=False)
     password_hash = Column(Text, nullable=False)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
+    role = Column(Text, default="user")
 
     created_tasks = relationship("Task", back_populates="creator")
     participations = relationship("Participant", back_populates="user")
@@ -83,6 +84,7 @@ class AuditRound(Base):
     loss = Column(Float, nullable=True)
     client_losses = Column(Text, nullable=True)
     clip_norm = Column(Float, nullable=True)
+    client_epsilons = Column(Text, nullable=True)
     finished_at = Column(TIMESTAMP, nullable=True)
 
     task = relationship("Task", back_populates="audit_rounds")

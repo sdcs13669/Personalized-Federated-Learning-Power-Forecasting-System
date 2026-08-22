@@ -53,6 +53,7 @@ class Task(Base):
     creator = relationship("User", back_populates="created_tasks")
     participants = relationship("Participant", back_populates="task")
     audit_rounds = relationship("AuditRound", back_populates="task")
+    rc_results = relationship("RcResult", back_populates="task")
 
 
 class Participant(Base):
@@ -88,3 +89,20 @@ class AuditRound(Base):
     finished_at = Column(TIMESTAMP, nullable=True)
 
     task = relationship("Task", back_populates="audit_rounds")
+
+
+class RcResult(Base):
+    __tablename__ = "rc_results"
+    __table_args__ = (
+        UniqueConstraint("task_id", "client_id", name="uq_task_client_rc"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)
+    client_id = Column(Text, nullable=False)
+    wape_global = Column(Float, nullable=True)
+    wape_rc = Column(Float, nullable=True)
+    png_path = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow)
+
+    task = relationship("Task", back_populates="rc_results")

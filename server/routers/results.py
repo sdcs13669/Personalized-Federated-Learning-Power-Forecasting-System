@@ -2,17 +2,21 @@
 from __future__ import annotations
 
 import json
+import shutil
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from server.database import get_db, SessionLocal
-from server.models import Task, AuditRound, Participant, User
+from server.models import Task, AuditRound, Participant, RcResult, User
 from server.routers.auth import get_current_user_from_header
 from server.fl_runner import start_training, get_final_model
 
 router = APIRouter(prefix="/api/tasks", tags=["results"])
+
+RC_UPLOADS_DIR = Path(__file__).resolve().parent.parent / "rc_uploads"
 
 
 @router.post("/{task_id}/start")
@@ -129,3 +133,69 @@ def download_model(
         headers={"Content-Disposition":
                  f"attachment; filename=model_task{task_id}.pkl"},
     )
+
+
+@router.post("/{task_id}/rc-result")
+def upload_rc_result(
+    task_id: int,
+    client_id: str = Form(...),
+    wape_global: float = Form(...),
+    wape_rc: float = Form(...),
+    png: UploadFile | None = File(None),
+    user: User = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    is_participant = db.query(Participant).filter(
+        Participant.task_id == task_id,
+        Participant.client_id == client_id,
+    ).first()
+    if not is_participant:
+        raise HTTPException(status_code=403, detail="Not a participant")
+
+    # 覆盖式：同 client 重复上传则更新
+    rc = db.query(RcResult).filter(
+        RcResult.task_id == task_id,
+        RcResult.client_id == client_id,
+    ).first()
+    if rc is None:
+        rc = RcResult(task_id=task_id, client_id=client_id)
+        db.add(rc)
+    rc.wape_global = wape_global
+    rc.wape_rc = wape_rc
+    if png is not None:
+        RC_UPLOADS_DIR.mkdir(exist_ok=True)
+        out = RC_UPLOADS_DIR / f"task{task_id}_{client_id}.png"
+        with out.open("wb") as f:
+            shutil.copyfileobj(png.file, f)
+        rc.png_path = f"/rc_uploads/task{task_id}_{client_id}.png"
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/{task_id}/rc-results")
+def list_rc_results(
+    task_id: int,
+    user: User = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    is_participant = db.query(Participant).filter(
+        Participant.task_id == task_id,
+        Participant.user_id == user.id,
+    ).first()
+    if not is_participant and task.creator_id != user.id:
+        raise HTTPException(status_code=403, detail="Not a participant")
+    rows = db.query(RcResult).filter(RcResult.task_id == task_id).all()
+    return [
+        {"client_id": r.client_id,
+         "wape_global": r.wape_global,
+         "wape_rc": r.wape_rc,
+         "png_url": r.png_path,
+         "created_at": str(r.created_at) if r.created_at else None}
+        for r in rows
+    ]

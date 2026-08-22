@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -208,6 +209,57 @@ def create_app(web_dir: str | None = None,
     def local_train_status():
         from app.trainer import get_train_status
         return get_train_status()
+
+    class RcBody(BaseModel):
+        task_id: int
+
+    @app.post("/local/rc")
+    def local_rc(body: RcBody):
+        from app.rc_runner import (download_model_bytes, parse_model_bytes,
+                                   run_rc, upload_rc_result)
+        t = token["value"]
+        if not t:
+            return JSONResponse(status_code=401,
+                                content={"detail": "未登录"})
+        try:
+            raw = download_model_bytes(cfg["server_url"], t, body.task_id)
+            keys, tensors = parse_model_bytes(raw)
+        except Exception as e:
+            return JSONResponse(status_code=500,
+                                content={"detail": f"下载模型失败: {e}"})
+        work = DATA_DIR / "rc_work"
+        work.mkdir(parents=True, exist_ok=True)
+        model_pt = work / "global_model.pt"
+        import torch
+        from fl_code.fed_core.params import tensors_to_state_dict
+        from fl_code.models import TCNConfig, build_tcn
+        state = tensors_to_state_dict(tensors, keys)
+        torch.save(state, model_pt)
+        out = DATA_DIR / "rc_out"
+        cmd = [sys.executable, "-m", "fl_code.train_personalized",
+               "--global-model", str(model_pt),
+               "--output-dir", str(out),
+               "--data-dir", str(DATA_DIR),
+               "--clients", cfg.get("client_id", "")]
+        try:
+            run_rc(cmd, ROOT)
+        except Exception as e:
+            return JSONResponse(status_code=500,
+                                content={"detail": f"RC 训练失败: {e}"})
+        import json
+        res_json = out / "personalized_results.json"
+        if res_json.exists():
+            results = json.loads(res_json.read_text(encoding="utf-8"))
+        else:
+            results = {}
+        wg = results.get("wape_global")
+        wr = results.get("wape_rc")
+        png = next((p for p in out.rglob("*.png")), None)
+        ok = upload_rc_result(cfg["server_url"], t, body.task_id,
+                              cfg.get("client_id", ""), wg or 0, wr or 0,
+                              str(png) if png else None)
+        return {"ok": ok, "wape_global": wg, "wape_rc": wr,
+                "png": str(png) if png else None}
 
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
     async def forward(path: str, request: Request):

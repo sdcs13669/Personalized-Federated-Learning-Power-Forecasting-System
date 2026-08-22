@@ -61,10 +61,17 @@ def test_datasets_list():
     h = _register("u1")
     r = client.get("/api/datasets", headers=h)
     assert r.status_code == 200
-    ids = {d["id"] for d in r.json()}
-    assert {"steel_ind", "tetouan_0", "tetouan_1", "tetouan_2"} <= ids
-    steel = next(d for d in r.json() if d["id"] == "steel_ind")
+    items = r.json()
+    ids = {d["id"] for d in items}
+    assert {"steel_ind_0", "tetouan_0", "tetouan_1", "tetouan_2"} <= ids
+    steel = next(d for d in items if d["id"] == "steel_ind_0")
     assert steel["url"].startswith("https://")
+    assert steel["client_id"] == "steel_ind_0"
+    # client_id 必须与 app/agent.py 对齐：tetouan 是 tetouan_city_*，不是 tetouan_*
+    by_id = {d["id"]: d["client_id"] for d in items}
+    assert by_id["tetouan_0"] == "tetouan_city_0"
+    assert by_id["tetouan_1"] == "tetouan_city_1"
+    assert by_id["tetouan_2"] == "tetouan_city_2"
 
 
 def test_rc_result_roundtrip():

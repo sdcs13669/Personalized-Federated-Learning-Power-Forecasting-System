@@ -28,6 +28,19 @@ _default_config = {
     "local_port": 9001,
 }
 
+# Task 1 演示数据集兜底清单（GitHub raw URL）。server 端 /api/datasets（Task 7）
+# 就绪前先用这份本地清单让 /local/collect 可用。
+DATASETS_FALLBACK = [
+    {"id": "steel_ind_0", "client_id": "steel_ind_0",
+     "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/steel_ind_0.zip"},
+    {"id": "tetouan_0", "client_id": "tetouan_city_0",
+     "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/tetouan_0.zip"},
+    {"id": "tetouan_1", "client_id": "tetouan_city_1",
+     "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/tetouan_1.zip"},
+    {"id": "tetouan_2", "client_id": "tetouan_city_2",
+     "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/tetouan_2.zip"},
+]
+
 
 def load_config() -> dict:
     if CONFIG_PATH.exists():
@@ -157,7 +170,8 @@ def create_app(web_dir: str | None = None,
     @app.post("/local/collect")
     def local_collect(body: CollectBody):
         from app.collector import collect_dataset
-        datasets = _fetch_datasets(cfg["server_url"], token["value"])
+        datasets = _fetch_datasets(cfg["server_url"], token["value"]) \
+            or DATASETS_FALLBACK
         ds = next((d for d in datasets if d["id"] == body.dataset_id), None)
         if ds is None:
             return JSONResponse(status_code=404,
@@ -174,6 +188,26 @@ def create_app(web_dir: str | None = None,
         except Exception as e:
             return JSONResponse(status_code=500, content={"detail": str(e)})
         return info
+
+    class TrainBody(BaseModel):
+        grpc_addr: str
+
+    @app.post("/local/start")
+    def local_start(body: TrainBody):
+        from app.trainer import start_training
+        try:
+            msg = start_training(body.grpc_addr, cfg.get("client_id", ""), {
+                "batch_size": 64, "local_epochs": 1, "lr": 0.001,
+                "device": "cpu",
+            })
+            return {"ok": True, "message": msg}
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"detail": str(e)})
+
+    @app.get("/local/train-status")
+    def local_train_status():
+        from app.trainer import get_train_status
+        return get_train_status()
 
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
     async def forward(path: str, request: Request):

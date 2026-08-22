@@ -75,6 +75,20 @@ def _forward(method: str, url: str, headers: dict, body: bytes | None) -> object
     return _Resp()
 
 
+def _fetch_datasets(server_url: str, token: str | None) -> list[dict]:
+    """从远程 server 拉数据集清单；失败返回空列表（调用方有本地兜底）。"""
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    try:
+        resp = _forward("GET", server_url + "/api/datasets", headers, None)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return []
+
+
 class LoginBody(BaseModel):
     username: str
     password: str
@@ -136,6 +150,30 @@ def create_app(web_dir: str | None = None,
     @app.get("/local/token")
     def local_token():
         return {"token": token["value"]}
+
+    class CollectBody(BaseModel):
+        dataset_id: str
+
+    @app.post("/local/collect")
+    def local_collect(body: CollectBody):
+        from app.collector import collect_dataset
+        datasets = _fetch_datasets(cfg["server_url"], token["value"])
+        ds = next((d for d in datasets if d["id"] == body.dataset_id), None)
+        if ds is None:
+            return JSONResponse(status_code=404,
+                                content={"detail": "未知数据集"})
+        if ds.get("client_id") and cfg.get("client_id") and \
+                ds["client_id"] != cfg["client_id"]:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": f"该数据源属于 {ds['client_id']}，"
+                                  f"与你的角色 {cfg.get('client_id')} 不匹配"})
+        try:
+            info = collect_dataset(body.dataset_id, ds["url"], DATA_DIR,
+                                   cfg.get("client_id", ""))
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"detail": str(e)})
+        return info
 
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
     async def forward(path: str, request: Request):

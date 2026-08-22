@@ -286,8 +286,46 @@ def _evaluate_personalized(global_model, corrector, df_norm, seqs,
 # ---------------------------------------------------------------------------
 
 def _load_client_data_cached(client_id: str, stride: int,
-                             max_seqs: int | None = None) -> dict:
-    """Load + preprocess, return normalised df and metadata."""
+                             max_seqs: int | None = None,
+                             data_dir: str | None = None) -> dict:
+    """Load + preprocess, return normalised df and metadata.
+
+    data_dir 非空时走 App 模式：数据源为本地采集目录（app/data），
+    列配置仍读 client_config.yaml。
+    """
+    if data_dir:
+        import yaml
+        from pathlib import Path as _P
+        with open(_P(__file__).resolve().parent
+                  / "models" / "client_config.yaml") as f:
+            config = yaml.safe_load(f)
+        from fl_code.data_utils import _find_client
+        dataset_id, client_cfg = _find_client(config, client_id)
+        ddir = _P(data_dir)
+        csvs = sorted(ddir.glob("*.csv"))
+        if not csvs:
+            raise FileNotFoundError(f"data-dir 下没有 csv: {ddir}")
+        df = pd.read_csv(csvs[0], parse_dates=["datetime"])
+        seqs = client_cfg["sequences"]
+        public_cols = list(config[dataset_id]["public_features"])
+        local_cols = list(config[dataset_id].get("local_features", []))
+        # 复刻 load_client_data 的列选择 + one-hot 展开逻辑
+        keep = ["datetime"] + seqs + \
+            [c for c in public_cols + local_cols if c in df.columns]
+        df = df[keep]
+        if "category_id" in df.columns:
+            cat = df["category_id"].astype(int)
+            df["cat_residential"] = (cat == 0).astype(float)
+            df["cat_transformer"] = (cat == 1).astype(float)
+            df["cat_industrial"] = (cat == 2).astype(float)
+            df = df.drop(columns=["category_id"])
+        df_norm, _ = preprocess(df, seqs, local_cols)
+        return {
+            "df_norm": df_norm,
+            "seqs": seqs,
+            "public_cols": public_cols,
+            "local_cols": local_cols,
+        }
     df, info = load_client_data(client_id)
     feat_names = set(info["public_features"] + info["local_features"])
     seqs = [c for c in df.columns if c not in feat_names and c != "datetime"]
@@ -423,7 +461,8 @@ def main(args: argparse.Namespace):
         print(f"Client: {cid}")
         print(f"{'='*60}")
 
-        data = _load_client_data_cached(cid, args.stride, args.max_seqs)
+        data = _load_client_data_cached(cid, args.stride, args.max_seqs,
+                                        data_dir=args.data_dir)
         n_seqs = len(data["seqs"])
         local_dim = len(data["local_cols"])
 
@@ -632,6 +671,8 @@ if __name__ == "__main__":
                         choices=["mlp", "lstm", "tcn"],
                         help="Residual Corrector architecture (default: mlp — "
                              "simplest, fastest; switch to tcn/lstm if needed)")
+    parser.add_argument("--data-dir", type=str, default=None,
+                        help="App 模式：本地采集数据目录（默认用 data/processed）")
     args = parser.parse_args()
 
     main(args)

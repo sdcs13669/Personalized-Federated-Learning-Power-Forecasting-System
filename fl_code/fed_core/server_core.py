@@ -64,6 +64,7 @@ class AuditFedAvg(FedAvg):
         params, _ = super().aggregate_fit(server_round, results, failures)
         arrived = set()
         client_losses = {}
+        client_epsilons = {}
         for proxy, res in results:
             cid = res.metrics.get("cid")
             if cid is None:
@@ -78,6 +79,9 @@ class AuditFedAvg(FedAvg):
             cid = str(cid)
             arrived.add(cid)
             client_losses[cid] = float(res.metrics.get("loss", 0.0))
+            eps = res.metrics.get("eps")
+            if eps is not None:
+                client_epsilons[cid] = round(float(eps), 6)
         # Deterministic order (expected_clients) so audits diff cleanly
         # across runs; unexpected cids are appended at the tail.
         joined = [cid for cid in self.task["expected_clients"]
@@ -93,6 +97,7 @@ class AuditFedAvg(FedAvg):
             "loss": round(float(sum(client_losses.values())
                                 / max(len(client_losses), 1)), 6),
             "client_losses": client_losses,
+            "client_epsilons": client_epsilons,
             "finished_at": datetime.now().isoformat(timespec="seconds"),
         }
         if self.adaptive_clip:

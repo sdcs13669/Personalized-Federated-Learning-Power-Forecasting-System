@@ -84,6 +84,7 @@ class AuditRound(Base):
     dropped = Column(Text, nullable=False)
     loss = Column(Float, nullable=True)
     client_losses = Column(Text, nullable=True)
+    client_epsilons = Column(Text, nullable=True)
     clip_norm = Column(Float, nullable=True)
     client_epsilons = Column(Text, nullable=True)
     finished_at = Column(TIMESTAMP, nullable=True)

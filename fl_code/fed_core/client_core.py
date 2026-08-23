@@ -107,8 +107,8 @@ def _train_dp(model, train_ds, lr, batch_size, local_epochs, device,
             optimizer.step()
             with torch.no_grad():
                 out = model(X)
-                epoch_loss += (out - y).abs().sum().item()
-                epoch_samples += b
+                epoch_loss += (out - y).abs().mean().item()
+                epoch_samples += 1
         loss = epoch_loss / max(epoch_samples, 1)
     # Return CUDA segments to the allocator so the next round starts with a
     # clean slate (the container itself is kept for the process lifetime).

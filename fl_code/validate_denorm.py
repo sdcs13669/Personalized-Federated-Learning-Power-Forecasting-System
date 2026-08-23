@@ -392,12 +392,18 @@ def main(args: argparse.Namespace) -> None:
     print(f"Device: {device}")
 
     # --- Resolve global models ---
-    nodp_path = _resolve_global("nodp", args.nodp_global)
+    nodp_meta = None
+    if args.nodp_json:
+        with open(args.nodp_json) as f:
+            nodp_meta = json.load(f)
+        print(f"nodp 指标从 {args.nodp_json} 载入（跳过 nodp 评估）")
+    nodp_path = (None if nodp_meta else
+                 _resolve_global("nodp", args.nodp_global))
     dp_path = _resolve_global("dp", args.dp_global)
-    if nodp_path is None and dp_path is None:
+    if nodp_path is None and dp_path is None and nodp_meta is None:
         raise SystemExit("No global model available — "
-                         "pass --nodp-global / --dp-global")
-    print(f"Global models:  nodp={nodp_path or 'SKIPPED'}")
+                         "pass --nodp-global / --dp-global / --nodp-json")
+    print(f"Global models:  nodp={nodp_path or ('--nodp-json' if nodp_meta else 'SKIPPED')}")
     print(f"                dp  ={dp_path or 'SKIPPED'}")
 
     nodp_model = _load_tcn(nodp_path, device) if nodp_path else None
@@ -435,6 +441,11 @@ def main(args: argparse.Namespace) -> None:
 
         client_res: dict = {}
         for variant in VARIANTS:
+            if variant == "nodp" and nodp_meta is not None:
+                # 复用预计算 nodp 指标：同一模型、同一协议，结果逐字节一致
+                client_res[variant] = (
+                    nodp_meta["per_client"].get(cid) or {}).get("nodp")
+                continue
             if variant == "nodp":
                 model = nodp_model
             elif variant == "dp":
@@ -481,6 +492,8 @@ def main(args: argparse.Namespace) -> None:
                        if agg_avgs[v]["r2"] else float("nan")),
             "num_clients": len(mae),
         }
+    if nodp_meta is not None:
+        aggregate["nodp"] = nodp_meta["aggregate"]["nodp"]
 
     # --- Summary table ---
     print(f"\n{'=' * 78}")
@@ -507,7 +520,8 @@ def main(args: argparse.Namespace) -> None:
         json.dump({
             "script": "fl_code.validate_denorm",
             "args": {k: str(v) for k, v in vars(args).items()},
-            "models": {"nodp": str(nodp_path) if nodp_path else None,
+            "models": {"nodp": (str(nodp_path) if nodp_path else
+                                (str(args.nodp_json) if nodp_meta else None)),
                        "dp": str(dp_path) if dp_path else None,
                        "rc_dir": str(rc_dir),
                        "rc_type": args.rc_type},
@@ -553,6 +567,11 @@ if __name__ == "__main__":
     parser.add_argument("--nodp-global", type=str, default=None,
                         help="No-DP Global TCN checkpoint (default: newest "
                              "fl_code/baseline_outputs/nodp/checkpoints/round_*.pt)")
+    parser.add_argument("--nodp-json", type=str, default=None,
+                        help="Precomputed metrics JSON (validate_denorm output) "
+                             "whose per_client/aggregate nodp values are reused "
+                             "verbatim, skipping the nodp rolling evaluation "
+                             "(dedup; mutually redundant with --nodp-global)")
     parser.add_argument("--dp-global", type=str, default=None,
                         help="DP Global TCN checkpoint (default: newest "
                              "fl_code/baseline_outputs/dp/checkpoints/round_*.pt)")

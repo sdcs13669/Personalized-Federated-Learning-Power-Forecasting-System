@@ -27,3 +27,10 @@ fl_code/baseline_outputs/
 fl_code/personalized_outputs/
 app/runs/
 .env
+
+#web 服务端 RC 对比图上传（运行时生成，不入库）
+server/rc_uploads/
+
+#App 运行产物（不入库）
+data/fl_server.db
+app/data/

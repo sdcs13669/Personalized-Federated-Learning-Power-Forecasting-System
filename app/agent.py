@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -16,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))  # 保证 `python app/agent.py` 运行时能 import app.*
 DEFAULT_WEB = ROOT / "web"
 CONFIG_PATH = Path(__file__).resolve().parent / "agent_config.json"
 DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -27,6 +29,19 @@ _default_config = {
     "client_id": "",
     "local_port": 9001,
 }
+
+# Task 1 演示数据集兜底清单（GitHub raw URL）。server 端 /api/datasets（Task 7）
+# 就绪前先用这份本地清单让 /local/collect 可用。
+DATASETS_FALLBACK = [
+    {"id": "steel_ind_0", "client_id": "steel_ind_0",
+     "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/steel_ind_0.zip"},
+    {"id": "tetouan_0", "client_id": "tetouan_city_0",
+     "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/tetouan_0.zip"},
+    {"id": "tetouan_1", "client_id": "tetouan_city_1",
+     "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/tetouan_1.zip"},
+    {"id": "tetouan_2", "client_id": "tetouan_city_2",
+     "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/tetouan_2.zip"},
+]
 
 
 def load_config() -> dict:
@@ -94,6 +109,18 @@ class LoginBody(BaseModel):
     password: str
 
 
+class CollectBody(BaseModel):
+    dataset_id: str
+
+
+class TrainBody(BaseModel):
+    grpc_addr: str
+
+
+class RcBody(BaseModel):
+    task_id: int
+
+
 def create_app(web_dir: str | None = None,
                server_url: str | None = None,
                config_path: Path | None = None) -> FastAPI:
@@ -151,29 +178,93 @@ def create_app(web_dir: str | None = None,
     def local_token():
         return {"token": token["value"]}
 
-    class CollectBody(BaseModel):
-        dataset_id: str
-
     @app.post("/local/collect")
     def local_collect(body: CollectBody):
-        from app.collector import collect_dataset
-        datasets = _fetch_datasets(cfg["server_url"], token["value"])
-        ds = next((d for d in datasets if d["id"] == body.dataset_id), None)
-        if ds is None:
-            return JSONResponse(status_code=404,
-                                content={"detail": "未知数据集"})
-        if ds.get("client_id") and cfg.get("client_id") and \
-                ds["client_id"] != cfg["client_id"]:
-            return JSONResponse(
-                status_code=400,
-                content={"detail": f"该数据源属于 {ds['client_id']}，"
-                                  f"与你的角色 {cfg.get('client_id')} 不匹配"})
         try:
+            from app.collector import collect_dataset
+            datasets = _fetch_datasets(cfg["server_url"], token["value"]) \
+                or DATASETS_FALLBACK
+            ds = next((d for d in datasets if d["id"] == body.dataset_id), None)
+            if ds is None:
+                return JSONResponse(status_code=404,
+                                    content={"detail": "未知数据集"})
+            if ds.get("client_id") and cfg.get("client_id") and \
+                    ds["client_id"] != cfg["client_id"]:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": f"该数据源属于 {ds['client_id']}，"
+                                      f"与你的角色 {cfg.get('client_id')} 不匹配"})
             info = collect_dataset(body.dataset_id, ds["url"], DATA_DIR,
                                    cfg.get("client_id", ""))
+            return info
+        except Exception as e:
+            return JSONResponse(status_code=500,
+                                content={"detail": f"采集失败: {e}"})
+
+    @app.post("/local/start")
+    def local_start(body: TrainBody):
+        from app.trainer import start_training
+        try:
+            msg = start_training(body.grpc_addr, cfg.get("client_id", ""), {
+                "batch_size": 64, "local_epochs": 1, "lr": 0.001,
+                "device": "cpu",
+            })
+            return {"ok": True, "message": msg}
         except Exception as e:
             return JSONResponse(status_code=500, content={"detail": str(e)})
-        return info
+
+    @app.get("/local/train-status")
+    def local_train_status():
+        from app.trainer import get_train_status
+        return get_train_status()
+
+    @app.post("/local/rc")
+    def local_rc(body: RcBody):
+        from app.rc_runner import (download_model_bytes, parse_model_bytes,
+                                   run_rc, upload_rc_result)
+        t = token["value"]
+        if not t:
+            return JSONResponse(status_code=401,
+                                content={"detail": "未登录"})
+        try:
+            raw = download_model_bytes(cfg["server_url"], t, body.task_id)
+            keys, tensors = parse_model_bytes(raw)
+        except Exception as e:
+            return JSONResponse(status_code=500,
+                                content={"detail": f"下载模型失败: {e}"})
+        work = DATA_DIR / "rc_work"
+        work.mkdir(parents=True, exist_ok=True)
+        model_pt = work / "global_model.pt"
+        import torch
+        from fl_code.fed_core.params import tensors_to_state_dict
+        from fl_code.models import TCNConfig, build_tcn
+        state = tensors_to_state_dict(tensors, keys)
+        torch.save(state, model_pt)
+        out = DATA_DIR / "rc_out"
+        cmd = [sys.executable, "-m", "fl_code.train_personalized",
+               "--global-model", str(model_pt),
+               "--output-dir", str(out),
+               "--data-dir", str(DATA_DIR),
+               "--clients", cfg.get("client_id", "")]
+        try:
+            run_rc(cmd, ROOT)
+        except Exception as e:
+            return JSONResponse(status_code=500,
+                                content={"detail": f"RC 训练失败: {e}"})
+        import json
+        res_json = out / "personalized_results.json"
+        if res_json.exists():
+            results = json.loads(res_json.read_text(encoding="utf-8"))
+        else:
+            results = {}
+        wg = results.get("wape_global")
+        wr = results.get("wape_rc")
+        png = next((p for p in out.rglob("*.png")), None)
+        ok = upload_rc_result(cfg["server_url"], t, body.task_id,
+                              cfg.get("client_id", ""), wg or 0, wr or 0,
+                              str(png) if png else None)
+        return {"ok": ok, "wape_global": wg, "wape_rc": wr,
+                "png": str(png) if png else None}
 
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
     async def forward(path: str, request: Request):
@@ -182,8 +273,13 @@ def create_app(web_dir: str | None = None,
         if method in ("POST", "PUT"):
             body = await request.body()
         headers = {"Content-Type": "application/json"}
+        # 优先透传前端携带的 Bearer（浏览器登录后请求带 token）；
+        # 没有时才用本地 /local/login 存储的 token。
+        auth = request.headers.get("authorization")
         t = token["value"]
-        if t:
+        if auth:
+            headers["Authorization"] = auth
+        elif t:
             headers["Authorization"] = "Bearer " + t
         url = cfg["server_url"] + "/api/" + path
         try:

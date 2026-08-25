@@ -21,6 +21,13 @@ def build_train_cache(csv_path: str, seqs: list[str],
                       stride: int = 48) -> dict:
     """本地 CSV → 归一化 → 80/20 切分 → 滑窗 Dataset（同 train_baseline 数据管线）。"""
     df = pd.read_csv(csv_path, parse_dates=["datetime"])
+    # 与 load_client_data 一致：category_id 展开为 one-hot 公共特征
+    if "cat_residential" in public_cols and "category_id" in df.columns:
+        cat = df["category_id"].astype(int)
+        df["cat_residential"] = (cat == 0).astype(float)
+        df["cat_transformer"] = (cat == 1).astype(float)
+        df["cat_industrial"] = (cat == 2).astype(float)
+        df = df.drop(columns=["category_id"])
     df_norm, _ = preprocess(df, seqs, local_cols)
     train_df, test_df = split_train_test(df_norm, seqs)
     X, y, X_local, _ = make_sliding_windows(
@@ -65,7 +72,9 @@ def start_training(grpc_addr: str, client_id: str, cfg: dict) -> str:
         config = yaml.safe_load(f)
     dataset_id = client_id.rsplit("_", 1)[0]
     dcfg = config[dataset_id]
-    client_cfg = next(c for c in dcfg["clients"] if c["id"] == client_id)
+    client_cfg = dcfg["clients"].get(client_id)
+    if client_cfg is None:
+        raise RuntimeError(f"client_config 中找不到客户端: {client_id}")
     seqs = client_cfg["sequences"]
     public_cols = list(dcfg["public_features"])
     local_cols = list(dcfg.get("local_features", []))

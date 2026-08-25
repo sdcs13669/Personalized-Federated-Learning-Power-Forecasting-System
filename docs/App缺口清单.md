@@ -7,19 +7,23 @@
 
 ## 缺口总览（复核 2026-08-25 最新）
 
-| 编号 | 缺口 | 负责人 | 状态 |
-|------|------|--------|------|
-| L-1 | GitHub push（数据源 URL 生效） | 组长 | ✅ 已验证 4 URL 200 |
-| L-2 | App 部署手册 | 组长 | ✅ 完成（75c56ce） |
-| L-3 | CRLF 行尾符清理 | 组长 | ✅ 完成（9a01058） |
-| A-1 | app/tests 三个测试文件 | A | 🔴 未做（`app/tests/` 不存在） |
-| A-2 | train-status 轮次/loss 回调 | A | 🔴 未做（`_state` 无赋值点） |
-| A-3 | fed_core 层 ε 上报单测 | A | 🔴 未做 |
-| A-4 | 删除 app/api.py 死代码 | A | 🔴 未做（文件仍在） |
-| B-1 | 客户端页手测记录 | B | 🔴 未做（C:/tmp 无记录） |
-| C-1 | 大屏 6 图手测记录 | C | 🔴 未做（C:/tmp 无记录） |
-| T-1 | 真实网络端到端联调 | 全体 | 🔴 未做（依赖 A-2 + L-2） |
-| L-4 | 分发 + 提交清单 | 组长 | ⚠️ 部分完成（文档已分发/可分发，提交清单未写） |
+| 编号 | 缺口                           | 负责人 | 状态                                             |
+| ---- | ------------------------------ | ------ | ------------------------------------------------ |
+| L-1  | GitHub push（数据源 URL 生效） | 组长   | ✅ 已验证 4 URL 200                              |
+| L-2  | App 部署手册                   | 组长   | ✅ 完成（75c56ce）                               |
+| L-3  | CRLF 行尾符清理                | 组长   | ✅ 完成（9a01058）                               |
+| A-1  | app/tests 三个测试文件         | A      | 🔴 未做（`app/tests/` 不存在）                 |
+| A-2  | train-status 轮次/loss 回调    | A      | 🔴 未做（`_state` 无赋值点）                   |
+| A-3  | fed_core 层 ε 上报单测        | A      | 🔴 未做                                          |
+| A-4  | 删除 app/api.py 死代码         | A      | 🔴 未做（文件仍在）                              |
+| B-1  | 客户端页手测记录               | B      | 🔴 未做（C:/tmp 无记录）                         |
+| C-1  | 大屏 6 图手测记录              | C      | 🔴 未做（C:/tmp 无记录）                         |
+| T-1  | 真实网络端到端联调             | 全体   | 🔴 未做（依赖 A-2 + L-2）                        |
+| L-4  | 分发 + 提交清单                | 组长   | ⚠️ 部分完成（文档已分发/可分发，提交清单未写） |
+| D-1  | 旧 Docker 容器占 8000/8089     | 全体   | 🔴 未处理（旧容器在跑，run_server.bat 10048）    |
+| D-2  | run_server.bat 缺 --host       | 组长   | ⚠️ 已改未提交（--host 0.0.0.0 已写入 bat）     |
+| D-3  | 第二台机器访问未实测           | 全体   | 🔴 未做（agent 转发链从未在第二台机跑过）        |
+| D-4  | 管理员界面入口未验证           | C/组长 | 🔴 未做（旧容器占端口期间 404，从未登入）        |
 
 **复核记录（2026-08-25）**：复查要点——git 无同学新提交；server 测试 44/44 通过；训练管线冒烟（tetouan_city_0 n_train=230 / steel_ind_0 n_train=231）通过；agent 可启动。代码层面主线健康，**剩余缺口全部在同学侧（A/B/C），未动工**。补缺口窗口 08-26~08-31，联调（T-1）09-01~09-05。
 
@@ -34,15 +38,18 @@
 **现状**：`app/tests/` 目录不存在。计划 Task 4/9/10 要求 `test_agent.py`（转发/登录/status）、`test_collector.py`（下载→解压→校验）、`test_trainer.py`（数据管线）。这次检查就是在缺测试的前提下靠手工冒烟才炸出 trainer 的两个 bug——必须补上防回归。
 
 **做法**：按计划 Task 4/9/10 的测试代码写（已给完整代码），测试不依赖真实网络：
+
 - test_collector：`monkeypatch urllib.request.urlopen`（局部 zip bytes）或直接用 `data/app_datasets/tetouan_0.zip` 本地文件转 `io.BytesIO`；断言 `dataset_id.txt`、rows、time_range
 - test_trainer：**必须包含两条回归**——
   1. `start_training` 的 client 配置查找（`clients` 是 **dict**，用 `.get()`）能拿到 tetouan_city_0 的 sequences
   2. `build_train_cache` 在 CSV 只含 `category_id` 时能正确展开 one-hot（输入 100 行小 csv，`n_train > 0` 不抛 KeyError）
 
 **合格标准**：
+
 ```
 D:\anoconda\envs\fl\python.exe -m pytest app/tests/ -v
 ```
+
 全部 PASS；无测试跳过真实网络的痕迹（无 urlopen 真请求）。
 
 ### A-2（高）/local/train-status 的 round/loss 永远为空
@@ -52,9 +59,11 @@ D:\anoconda\envs\fl\python.exe -m pytest app/tests/ -v
 **做法**：给 `FedClient` 挂每轮回调。最简方案：在 `trainer.py` 里子类化/包装 `FedClient.fit`，每次 fit 后更新 `_state["round"]`（从 fit 参数或累计计数）与 `_state["loss"]`（fit 返回的 metrics["loss"]），并连同 `eps`。参考 `fl_code/fed_core/client_core.py` 的 `FedClient.fit`/`CidEchoClient` 结构（metrics 已在 server_core 侧消费，这里只是旁路记录）。
 
 **合格标准**：本机起一个 **1 轮** flwr 服务器冒烟（拉到 `C:/tmp`），agent `/local/start` 后轮询：
+
 ```
 curl http://localhost:9001/local/train-status
 ```
+
 训练期内返回 `{"running": true, "round": >=1, "loss": <非空>, ...}`；训练后 `running: false`。
 
 ### A-3（中）Task 6 的 fed_core 层 ε 上报单测缺失
@@ -64,9 +73,11 @@ curl http://localhost:9001/local/train-status
 **做法**：在 `test/` 下新建测试：仿照 `test/test_fed_core_server.py` 的两客户端模拟，result.metrics 带 `{"cid": ..., "eps": 1.25}`——断言 `AuditFedAvg.audit_rows[0]["client_epsilons"]` 等于 `{"<cid>": 1.25}`；不含 eps 的 result 不影响其他行。
 
 **合格标准**：
+
 ```
 D:\anoconda\envs\fl\python.exe -m pytest test/ -v
 ```
+
 新增用例 PASS，原 40 个不回归。
 
 ### A-4（低）app/api.py 死代码
@@ -132,10 +143,46 @@ push 完成，4 个 raw URL 已验证返回 200（各 zip 字节数与本地一�
 
 `.gitattributes` 已建（`*.py/js/md/json/yaml/csv/svg` 等 eol=lf，`*.bat` eol=crlf，`zip/pt` binary），`git add --renormalize .` 已执行，commit `9a01058`。**后续 Windows 编辑器保存后 git status 不再出现假 diff；新文件也按此约定写入**（注意：*.bat 保持 CRLF 正确，勿用其他工具改成 LF）。
 
-### L-4（组长）分发 + 提交清单
+## D 组：环境与部署现状问题（组长/全体，2026-08-25 现场诊断）
 
-- 把 `docs/superpowers/specs/2026-08-21-*.md` + `docs/superpowers/plans/2026-08-21-*.md` 发给 A/B/C（gitignore 里，git 拉不到）
-- 各人验收材料（C:/tmp 手测记录）收齐后写提交清单（Task 16）
+以下 4 项是本次准备演示环境时发现的**部署层问题**（不是同学代码缺口，属于服务器 + 联网验证），**全部是 T-1 联调的前置**。
+
+### D-1（高）旧 Docker 容器占用 8000/8089
+
+**现状**：本机 Docker Desktop 上有早期构建的 fl-server 容器一直运行（旧代码，`GET /` 404——静态前端挂载是后来加的），Docker 的 WSL 集成把 8000/8089 转发到所有发行版与 Windows localhost。此时双击 run_server.bat 报 `[Errno 10048] bind 127.0.0.1:8000`。
+
+**验证证据**：`curl http://127.0.0.1:8000/api/health` 返回 ok（占用者=容器）；WSL 内 `ss -tlnp` 见 `*:8000`/`*:8089` LISTEN 但 `ps` 无对应进程（vpnkit 代持）。
+
+**处理**（二选一，推荐先 A）：
+
+- A. 想用 Docker 方案：项目根 `docker compose up --build -d` 重建镜像（拿到含静态挂载的新代码），`curl -o /dev/null -w %{http_code} http://localhost:8000/` 应返回 200
+- B. 想用本机裸机：`docker compose down` 停容器 → 双击 run_server.bat
+
+**合格标准**：8000 上只有一套 server（裸机或重建后的容器），`http://localhost:8000/` 返回登录页（非 404）。
+
+### D-2（高）run_server.bat 只监听 127.0.0.1（已改，未验证）
+
+**现状**：原 bat 无 `--host` 参数，uvicorn 默认绑 127.0.0.1——本机能开，**其他机器连不上 8000**（网页/API 全拒绝；而 flwr 8089 侧本来就绑 0.0.0.0，造成"训练口能通、API 口不能通"的诡异现象）。
+
+**处理**：已在 `run_server.bat` 加 `--host 0.0.0.0 --port 8000`（本地待提交）。
+
+**合格标准**：局域网另一台机器浏览器打开 `http://<serverIP>:8000` 能看到登录页。
+
+### D-3（中）"其他机器如何访问"尚未实测
+
+**现状**：客户端机器的访问链（改 `app/agent_config.json` 的 `server_url` → 双击 run_app.bat → localhost:9001 → agent 转发 :8000 + flwr 训练连 :8089）代码已具备，但从没在第二台机器实测过。
+
+**处理**：按部署手册 §2.2（防火墙）+ §2.3（客户端准备）+ §3（五步上手）在第二台机器走一遍。
+
+**合格标准**：第二台机器 run_app.bat → 页面登录成功 → 广场能拉到任务列表（= 转发链通）。
+
+### D-4（中）管理员界面入口未验证
+
+**现状**：管理端 = server `:8000` 上 admin/admin123 登录（seed 账号）→ 顶栏"管理台" → 广场（所有状态任务）→ 任务详情 6 图。旧容器占端口期间此界面完全不可访问（404），从未验证过。
+
+**处理**：D-1 处理完成后，浏览器 `:8000` 用 admin/admin123 登录，确认 navAdmin 出现、广场可见所有状态任务（与 C-1 大屏手测衔接）。
+
+**合格标准**：admin 登录后顶栏出现"管理台"，普通账号登录不出现。
 
 ---
 
@@ -148,6 +195,7 @@ push 完成，4 个 raw URL 已验证返回 200（各 zip 字节数与本地一�
 **流程**：部署手册（L-2）发布后，三台机器按流程：server 起 → admin 发起任务 → 客户端 1/2 各 run_client.bat → 登录 → **采集（真实 GitHub URL）** → 凭密钥加入 → start → 训练 ≥3 轮（让 1 台中途掉线演示 audit dropped 记录）→ 完成 → 客户端下载模型 → 本地 RC → 上传 → 管理端大屏查看 WAPE + 对比图。
 
 **合格标准**：
+
 1. 大屏全程可见轮次/参与/ε/loss 更新
 2. 客户端页显示当前轮次/loss（依赖 A-2）
 3. 掉线客户端在 audit 的 dropped 里如实记录，训练不中断（accept_failures）

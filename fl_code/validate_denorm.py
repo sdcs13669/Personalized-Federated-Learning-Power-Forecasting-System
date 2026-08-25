@@ -19,8 +19,8 @@ TCN, as recorded in ``personalized_outputs/<rc_type>/config.json``.
 
 Outputs:
   - JSON metrics (default ``fl_code/denorm_eval/denorm_metrics.json``)
-  - ``fig_denorm_per_client.png`` — per-client MAE / RMSE / R² / WAPE bars
-  - ``fig_denorm_aggregate.png``  — aggregate WAPE / avg MAE / avg RMSE
+  - ``fig_denorm_per_client.png`` — per-client WAPE (%), 3 variants
+    (the aggregate comparison lives in make_figures' standard figure set)
 
 Usage::
 
@@ -287,15 +287,8 @@ def _labels(cn: bool) -> dict[str, str]:
             "v_nodp": "nodp (Y_pre)",
             "v_dp": "dp (Y_pre)",
             "v_dp+rc": "dp+rc (Y_final P50)",
-            "metric_mae": "MAE (kWh)",
-            "metric_rmse": "RMSE (kWh)",
-            "metric_r2": "R$^2$",
             "metric_wape": "WAPE (%)",
-            "fig_per_client": "反归一化后每客户端指标对比（原始单位 kWh）",
-            "fig_agg": "全局聚合对比（反归一化后，原始单位 kWh）",
-            "agg_wape": "聚合 WAPE (%)",
-            "agg_mae": "平均 MAE (kWh)",
-            "agg_rmse": "平均 RMSE (kWh)",
+            "fig_per_client": "反归一化后每客户端 WAPE 对比（原始单位 kWh）",
             "clients": "客户端",
         }
     return {
@@ -303,15 +296,8 @@ def _labels(cn: bool) -> dict[str, str]:
         "v_nodp": "nodp (Y_pre)",
         "v_dp": "dp (Y_pre)",
         "v_dp+rc": "dp+rc (Y_final P50)",
-        "metric_mae": "MAE (kWh)",
-        "metric_rmse": "RMSE (kWh)",
-        "metric_r2": "R$^2$",
         "metric_wape": "WAPE (%)",
-        "fig_per_client": "Per-client de-normalised metrics (raw kWh)",
-        "fig_agg": "Aggregate comparison (de-normalised, raw kWh)",
-        "agg_wape": "Aggregate WAPE (%)",
-        "agg_mae": "avg MAE (kWh)",
-        "agg_rmse": "avg RMSE (kWh)",
+        "fig_per_client": "Per-client de-normalised WAPE (raw kWh)",
         "clients": "Client",
     }
 
@@ -323,63 +309,36 @@ def _finish(fig, L: dict) -> None:
 
 
 def _fig_per_client(per_client: dict, L: dict, plt) -> None:
-    """2×2 grid: per-client MAE / RMSE / R² / WAPE, 3 variants per client."""
+    """Single panel: per-client WAPE (%), 3 variants per client."""
     cids = list(per_client)
-    fig, axes = plt.subplots(2, 2, figsize=(13.5, 8.5))
+    fig, ax = plt.subplots(figsize=(11.5, 3.8))
     x = np.arange(len(cids))
-    w = 0.26
+    w = 0.30                     # bars nearly touching (thin white seams)
 
-    panels = ((axes[0, 0], "mae"), (axes[0, 1], "rmse"),
-              (axes[1, 0], "r2"), (axes[1, 1], "wape"))
-    for ax, metric in panels:
-        for i, v in enumerate(VARIANTS):
-            vals = []
-            for cid in cids:
-                m = per_client[cid].get(v)
-                if m is None or np.isnan(m[metric]):
-                    vals.append(np.nan)
-                elif metric == "wape":
-                    vals.append(m[metric] * 100)
-                else:
-                    vals.append(m[metric])
-            ax.bar(x + (i - 1) * w, vals, w, label=L["v_" + v],
-                   color=STAGE_COLORS[v])
-        ax.set_xticks(x)
-        ax.set_xticklabels(cids, rotation=30, ha="right", fontsize=8)
-        ax.set_title(L["metric_" + metric])
-        ax.legend(fontsize=8)
-        ax.grid(alpha=0.3, axis="y")
+    maxv = 0.0
+    for i, v in enumerate(VARIANTS):
+        vals = []
+        for cid in cids:
+            m = per_client[cid].get(v)
+            if m is None or m.get("wape") is None:
+                vals.append(np.nan)
+            else:
+                maxv = max(maxv, m["wape"] * 100)
+                vals.append(m["wape"] * 100)
+                ax.text(x[cids.index(cid)] + (i - 1) * w,
+                        m["wape"] * 100 + 0.5, f"{m['wape']*100:.1f}",
+                        ha="center", va="bottom", fontsize=5.5,
+                        style="italic", color="#333333")
+        ax.bar(x + (i - 1) * w, vals, w, label=L["v_" + v],
+               color=STAGE_COLORS[v], edgecolor="white", lw=0.5)
+    ax.set_xticks(x)
+    ax.set_xticklabels(cids, rotation=30, ha="right", fontsize=8)
+    ax.set_ylabel(L["metric_wape"])
+    ax.legend(loc="upper center", ncol=3, fontsize=8)
+    ax.grid(axis="y", zorder=2.5, color="#b0b0b0", lw=0.6, alpha=0.9)
+    ax.set_ylim(0, maxv * 1.15)
 
-    fig.suptitle(L["fig_per_client"], fontsize=13)
-    _finish(fig, L)
-
-
-def _fig_aggregate(aggregate: dict, L: dict, plt) -> None:
-    """Left: aggregate WAPE per variant; right: avg MAE / RMSE per variant."""
-    fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(13.5, 5))
-    x = np.arange(len(VARIANTS))
-
-    wapes = [aggregate[v]["wape"] * 100 for v in VARIANTS]
-    ax_left.bar(x, [np.nan if np.isnan(v) else v for v in wapes], 0.55,
-                color=[STAGE_COLORS[v] for v in VARIANTS])
-    ax_left.set_xticks(x)
-    ax_left.set_xticklabels(VARIANTS)
-    ax_left.set_title(L["agg_wape"])
-    ax_left.grid(alpha=0.3, axis="y")
-
-    w = 0.3
-    for i, (key, label) in enumerate((("avg_mae", L["agg_mae"]),
-                                      ("avg_rmse", L["agg_rmse"]))):
-        vals = [aggregate[v][key] for v in VARIANTS]
-        ax_right.bar(x + (i - 0.5) * w,
-                     [np.nan if np.isnan(v) else v for v in vals], w,
-                     label=label)
-    ax_right.set_xticks(x)
-    ax_right.set_xticklabels(VARIANTS)
-    ax_right.legend(fontsize=8)
-    ax_right.grid(alpha=0.3, axis="y")
-
-    fig.suptitle(L["fig_agg"], fontsize=13)
+    fig.suptitle(L["fig_per_client"], fontsize=12)
     _finish(fig, L)
 
 
@@ -541,21 +500,11 @@ def main(args: argparse.Namespace) -> None:
     fig_dir = Path(args.fig_dir) if args.fig_dir else DEFAULT_FIG_DIR
     fig_dir.mkdir(parents=True, exist_ok=True)
 
-    saved = []
     _fig_per_client(per_client, L, plt)
     p = fig_dir / "fig_denorm_per_client.png"
     plt.gcf().savefig(p, dpi=150)
     plt.close()
-    saved.append(p)
-
-    _fig_aggregate(aggregate, L, plt)
-    p = fig_dir / "fig_denorm_aggregate.png"
-    plt.gcf().savefig(p, dpi=150)
-    plt.close()
-    saved.append(p)
-
-    for p in saved:
-        print(f"Saved: {p}")
+    print(f"Saved: {p}")
     if args.show:
         plt.show()
 

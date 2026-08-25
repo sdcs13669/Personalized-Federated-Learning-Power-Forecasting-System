@@ -1,0 +1,149 @@
+{
+  "script": "fl_code.validate_denorm",
+  "args": {
+    "nodp_global": "/root/Personalized-Federated-Learning-Power-Forecasting-System/fl_code/baseline_outputs/no-dp/checkpoints/round_030.pt",
+    "nodp_json": "None",
+    "dp_global": "None",
+    "rc_type": "mlp",
+    "rc_dir": "None",
+    "clients": "None",
+    "stride": "6",
+    "eval_seqs": "None",
+    "max_seqs": "None",
+    "output_json": "/root/Personalized-Federated-Learning-Power-Forecasting-System/fl_code/analysis/nodp_denorm_metrics.json",
+    "fig_dir": "/root/Personalized-Federated-Learning-Power-Forecasting-System/fl_code/analysis",
+    "device": "None",
+    "show": "False"
+  },
+  "models": {
+    "nodp": "/root/Personalized-Federated-Learning-Power-Forecasting-System/fl_code/baseline_outputs/no-dp/checkpoints/round_030.pt",
+    "dp": null,
+    "rc_dir": "/root/Personalized-Federated-Learning-Power-Forecasting-System/fl_code/personalized_outputs/mlp",
+    "rc_type": "mlp"
+  },
+  "note": "metrics computed after de-normalisation (raw kWh units)",
+  "per_client": {
+    "steel_ind_0": {
+      "nodp": {
+        "mae": 6.679751396179199,
+        "rmse": 12.796178817749023,
+        "r2": 0.8321484211908847,
+        "wape": 0.25722160935401917,
+        "n": 3360
+      },
+      "dp": null,
+      "dp+rc": null
+    },
+    "tetouan_city_0": {
+      "nodp": {
+        "mae": 865.6009521484375,
+        "rmse": 1246.0133056640625,
+        "r2": 0.9575252195755504,
+        "wape": 0.029575929045677185,
+        "n": 3348
+      },
+      "dp": null,
+      "dp+rc": null
+    },
+    "tetouan_city_1": {
+      "nodp": {
+        "mae": 789.75341796875,
+        "rmse": 1172.7080078125,
+        "r2": 0.9539350759638323,
+        "wape": 0.03383491933345795,
+        "n": 3348
+      },
+      "dp": null,
+      "dp+rc": null
+    },
+    "tetouan_city_2": {
+      "nodp": {
+        "mae": 822.5838012695312,
+        "rmse": 1362.2843017578125,
+        "r2": 0.8272291774868108,
+        "wape": 0.06834524124860764,
+        "n": 3348
+      },
+      "dp": null,
+      "dp+rc": null
+    },
+    "lcl_res_0": {
+      "nodp": {
+        "mae": 0.6794491410255432,
+        "rmse": 0.9335939288139343,
+        "r2": 0.8523437943431085,
+        "wape": 0.11056926846504211,
+        "n": 46356
+      },
+      "dp": null,
+      "dp+rc": null
+    },
+    "lcl_res_1": {
+      "nodp": {
+        "mae": 0.7538151144981384,
+        "rmse": 1.0812201499938965,
+        "r2": 0.8026274199569579,
+        "wape": 0.12071710079908371,
+        "n": 34110
+      },
+      "dp": null,
+      "dp+rc": null
+    },
+    "eld_ind_0": {
+      "nodp": {
+        "mae": 63.143795013427734,
+        "rmse": 287.4999694824219,
+        "r2": 0.9937869453992677,
+        "wape": 0.05662566423416138,
+        "n": 416340
+      },
+      "dp": null,
+      "dp+rc": null
+    },
+    "eld_ind_1": {
+      "nodp": {
+        "mae": 6.619314670562744,
+        "rmse": 12.38148307800293,
+        "r2": 0.973509987679503,
+        "wape": 0.09327036887407303,
+        "n": 311220
+      },
+      "dp": null,
+      "dp+rc": null
+    },
+    "eld_ind_2": {
+      "nodp": {
+        "mae": 13.612129211425781,
+        "rmse": 49.371482849121094,
+        "r2": 0.9940219942899894,
+        "wape": 0.05535421893000603,
+        "n": 137304
+      },
+      "dp": null,
+      "dp+rc": null
+    }
+  },
+  "aggregate": {
+    "nodp": {
+      "wape": 0.05235732918305707,
+      "avg_mae": 285.49182510375977,
+      "avg_rmse": 460.5632826156086,
+      "avg_r2": 0.9096808928762117,
+      "num_clients": 9
+    },
+    "dp": {
+      "wape": NaN,
+      "avg_mae": NaN,
+      "avg_rmse": NaN,
+      "avg_r2": NaN,
+      "num_clients": 0
+    },
+    "dp+rc": {
+      "wape": NaN,
+      "avg_mae": NaN,
+      "avg_rmse": NaN,
+      "avg_r2": NaN,
+      "num_clients": 0
+    }
+  }
+}

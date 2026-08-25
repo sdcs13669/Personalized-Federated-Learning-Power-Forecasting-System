@@ -104,10 +104,11 @@ def step_nodp(args, analysis_root: Path) -> bool:
     if not args.force and out.exists():
         print("[skip] nodp 基线评估 已完成")
         return True
+    # 不传 --fig-dir：nodp 专用评估只有 nodp 个变体，出图无意义；
+    # 每客户端图（3 变体齐全）由后续各档 ε 验证步生成
     cmd = _python() + ["fl_code.validate_denorm",
                        "--nodp-global", str(NODP_GLOBAL),
-                       "--output-json", str(out),
-                       "--fig-dir", str(analysis_root)]
+                       "--output-json", str(out)]
     if args.clients:
         cmd += ["--clients", *args.clients]
     if args.smoke:

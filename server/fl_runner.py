@@ -81,6 +81,10 @@ def _run_flwr_server(task_dict: dict, participants: list[dict],
     server_error = None
     try:
         from flwr.server import ServerConfig, start_server
+        import signal as _signal
+        # 后台线程中 signal.signal 会抛 ValueError，替换为 no-op 避免 flwr 崩溃
+        if threading.current_thread() is not threading.main_thread():
+            _signal.signal = lambda signum, handler: None
 
         from fl_code.fed_core.server_core import build_strategy
         from fl_code.models import TCNConfig, build_tcn

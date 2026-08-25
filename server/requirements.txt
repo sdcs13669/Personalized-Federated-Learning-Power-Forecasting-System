@@ -9,3 +9,8 @@ python-multipart>=0.0.9
 flwr==1.30.0
 numpy
 dp-accounting==0.6.0
+pandas>=2.0
+matplotlib
+scipy
+scikit-learn
+pyyaml

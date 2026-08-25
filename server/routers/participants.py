@@ -57,7 +57,7 @@ def join_task(
     db.refresh(participant)
     return {
         "participant_id": participant.id,
-        "grpc_addr": f"{FL_SERVER_HOST}:{task.grpc_port}",
+        "grpc_addr": f"{FL_SERVER_HOST}:{FL_GRPC_PORT}",
         "client_id": req.client_id,
     }
 

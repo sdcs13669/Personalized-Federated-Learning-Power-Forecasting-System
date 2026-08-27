@@ -1,198 +1,94 @@
-"""Manage flwr server lifecycle in background threads."""
+"""Manage flwr server lifecycle via subprocess workers.
+
+flwr 1.30 `start_server` 在后台线程里无法正常监听 gRPC 端口，
+改为在独立子进程（fl_server_worker.py）中运行。
+"""
 from __future__ import annotations
 
-import json
 import logging
+import os
 import pickle
-import threading
+import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime
-
-from server.models import Task, AuditRound
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+ROOT = Path(__file__).resolve().parent.parent
+MODEL_DIR = Path(os.environ.get("MODEL_DIR", "/app/data"))
 
 
 @dataclass
 class ActiveTask:
     task_id: int
-    thread: threading.Thread | None = None
-    stop_event: threading.Event | None = None
-    final_tensors: list | None = None
+    proc: subprocess.Popen | None = None
     state_keys: list[str] = field(default_factory=list)
 
 
 _active_tasks: dict[int, ActiveTask] = {}
 
 
+def _model_path(task_id: int) -> Path:
+    return MODEL_DIR / f"fl_model_{task_id}.pkl"
+
+
 def get_final_model(task_id: int) -> bytes | None:
-    """Get final model parameters as bytes (from memory, never from disk)."""
-    active = _active_tasks.get(task_id)
-    if active is None or active.final_tensors is None:
+    """Get final model parameters as bytes (worker saves to file)."""
+    p = _model_path(task_id)
+    if not p.exists():
         return None
-    return pickle.dumps({
-        "keys": active.state_keys,
-        "tensors": active.final_tensors,
-    })
+    with open(p, "rb") as f:
+        return f.read()
 
 
 def get_task_status(task_id: int) -> str | None:
-    """Check if a task is actively training."""
+    """Check if a task is actively training (based on subprocess)."""
     active = _active_tasks.get(task_id)
-    if active is None:
+    if active is None or active.proc is None:
         return None
-    if active.thread is not None and active.thread.is_alive():
+    if active.proc.poll() is None:
         return "training"
-    if active.final_tensors is not None:
-        return "completed"
-    return "unknown"
+    return "completed" if active.proc.returncode == 0 else "failed"
 
 
 def start_training(task_dict: dict, participants: list[dict],
                    db_session_factory) -> None:
-    """Start flwr server in a background thread. Non-blocking."""
+    """Start flwr server in a separate subprocess. Non-blocking."""
     task_id = task_dict["id"]
 
     # Guard against port collision (demo: only one concurrent training task)
     for tid, active in _active_tasks.items():
-        if active.thread is not None and active.thread.is_alive():
+        if active.proc is not None and active.proc.poll() is None:
             raise RuntimeError(
                 f"Task {tid} is already training. "
                 f"Only one concurrent task supported (gRPC port collision)."
             )
 
-    stop_event = threading.Event()
-    active = ActiveTask(task_id=task_id, stop_event=stop_event)
-    _active_tasks[task_id] = active
+    payload = {**task_dict, "participants": participants}
+    task_pkl = Path(tempfile.gettempdir()) / f"fl_task_{task_id}.pkl"
+    with open(task_pkl, "wb") as f:
+        pickle.dump(payload, f)
 
-    thread = threading.Thread(
-        target=_run_flwr_server,
-        args=(task_dict, participants, db_session_factory, active),
-        daemon=True,
-    )
-    active.thread = thread
-    thread.start()
-    logger.info("Started flwr server thread for task %d", task_id)
+    model_out = _model_path(task_id)
+    if model_out.exists():
+        model_out.unlink()
 
-
-def _run_flwr_server(task_dict: dict, participants: list[dict],
-                    db_session_factory, active: ActiveTask) -> None:
-    """Run inside background thread: start flwr, wait for completion."""
-    server_error = None
-    try:
-        from flwr.server import ServerConfig, start_server
-        import signal as _signal
-        # 后台线程中 signal.signal 会抛 ValueError，替换为 no-op 避免 flwr 崩溃
-        if threading.current_thread() is not threading.main_thread():
-            _signal.signal = lambda signum, handler: None
-
-        from fl_code.fed_core.server_core import build_strategy
-        from fl_code.models import TCNConfig, build_tcn
-
-        model = build_tcn(TCNConfig())
-        state_keys = list(model.state_dict().keys())
-        active.state_keys = state_keys
-
-        expected_clients = [p["client_id"] for p in participants]
-
-        # Update task status to 'training'
-        db = db_session_factory()
-        try:
-            task = db.query(Task).filter(Task.id == active.task_id).first()
-            if task:
-                task.status = "training"
-                task.started_at = datetime.utcnow()
-                db.commit()
-        finally:
-            db.close()
-
-        def on_round_done(row: dict) -> None:
-            """Callback from AuditFedAvg after each round: write to DB."""
-            db = db_session_factory()
-            try:
-                audit = AuditRound(
-                    task_id=active.task_id,
-                    round=row["round"],
-                    expected=json.dumps(row["expected"]),
-                    joined=json.dumps(row["joined"]),
-                    dropped=json.dumps(row["dropped"]),
-                    loss=row.get("loss"),
-                    client_losses=json.dumps(row.get("client_losses", {})),
-                    client_epsilons=json.dumps(row.get("client_epsilons", {})),
-                    clip_norm=row.get("clip_norm"),
-                    finished_at=datetime.utcnow(),
-                )
-                db.add(audit)
-                db.commit()
-            except Exception as e:
-                logger.error("Failed to write audit row: %s", e)
-            finally:
-                db.close()
-
-        flwr_task = {
-            "name": task_dict["name"],
-            "rounds": task_dict["rounds"],
-            "round_timeout": task_dict.get("round_timeout"),
-            "checkpoint_dir": None,
-            "audit_path": None,
-            "expected_clients": expected_clients,
-            "deliver_model": True,
-            "started_at": str(datetime.utcnow()),
-            "cfg": task_dict.get("cfg", {}),
-        }
-
-        strategy = build_strategy(flwr_task, state_keys,
-                                  on_round_done=on_round_done)
-
-        grpc_port = task_dict.get("grpc_port", 8089)
-        try:
-            start_server(
-                server_address=f"0.0.0.0:{grpc_port}",
-                strategy=strategy,
-                config=ServerConfig(
-                    num_rounds=task_dict["rounds"],
-                    round_timeout=task_dict.get("round_timeout"),
-                ),
-            )
-        except Exception as e:
-            logger.error("flwr server error for task %d: %s",
-                         active.task_id, e)
-            server_error = e
-
-        # Extract final model only if no error
-        if server_error is None and strategy._last_parameters is not None:
-            active.final_tensors = strategy._last_parameters
-
-    except Exception as e:
-        logger.error("flwr server setup failed for task %d: %s",
-                     active.task_id, e)
-        server_error = e
-
-    # Update status based on outcome
-    db = db_session_factory()
-    try:
-        task = db.query(Task).filter(Task.id == active.task_id).first()
-        if task:
-            task.status = "failed" if server_error else "completed"
-            task.finished_at = datetime.utcnow()
-            db.commit()
-    finally:
-        db.close()
-
-    logger.info("flwr server finished for task %d (status: %s)",
-                active.task_id, "failed" if server_error else "completed")
-
-    # NOTE: We intentionally keep the _active_tasks entry so that
-    # get_final_model() can serve the trained model bytes.
-    # In production, implement cleanup_completed_tasks() with TTL.
+    worker = ROOT / "server" / "fl_server_worker.py"
+    log_path = MODEL_DIR / f"fl_worker_{task_id}.log"
+    with open(log_path, "w") as logf:
+        proc = subprocess.Popen(
+            [sys.executable, str(worker), str(task_pkl), str(model_out)],
+            cwd=str(ROOT),
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+        )
+    _active_tasks[task_id] = ActiveTask(task_id=task_id, proc=proc)
+    logger.info("Started flwr server subprocess for task %d (log: %s)",
+                task_id, log_path)
 
 
 def cleanup_completed_tasks(max_age_hours: int = 24) -> int:
-    """Remove completed tasks older than max_age_hours.
-
-    Returns count of tasks removed.  For the current demo we keep all
-    completed tasks so that ``get_final_model()`` continues to work.
-    A production deployment would implement TTL-based cleanup here.
-    """
-    # Demo stub — no cleanup performed
+    """Demo stub — keep completed tasks so get_final_model() still works."""
     return 0

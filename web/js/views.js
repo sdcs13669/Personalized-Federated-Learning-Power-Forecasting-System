@@ -233,8 +233,8 @@ async function doCreateTask() {
 function showJoinTask(id, name) {
   openModal(`
     <h3 style="margin-bottom:14px;">加入任务：${name}</h3>
-    <div class="form-row"><label>密钥</label><input id="j-key"></div>
-    <div class="form-row"><label>角色 ID（client_id，如 steel_ind_0 / tetouan_0）</label><input id="j-cid"></div>
+    <div class="form-row"><label>密钥</label><input id="j-key" autocomplete="off"></div>
+    <div class="form-row"><label>角色 ID（client_id，如 steel_ind_0 / tetouan_0）</label><input id="j-cid" autocomplete="off"></div>
     <div style="display:flex;gap:10px;justify-content:flex-end;">
       <button class="secondary" onclick="closeModal()">取消</button>
       <button onclick="doJoinTask(${id})">加入</button>

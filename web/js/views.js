@@ -570,10 +570,11 @@ function renderCharts(audit, rc) {
                  inRange: { color: ["#e74c3c", "#2ca02c"] } },
     series: [{ type: "heatmap", data: heat }],
   });
-  // 3. 每客户端累计 ε（每轮上报的 eps 已是"跑到该轮的累计 ε"，直接画，不再相加）
+  // 3. 每客户端累计 ε（A 已改为每轮增量上报，前端逐轮累加得到累计）
   const epsSeries = clients.map(cid => ({
     name: cid, type: "line",
-    data: audit.map(a => Number(((a.client_epsilons || {})[cid] || 0).toFixed(3))),
+    data: audit.map((a, i) => Number((audit.slice(0, i + 1)
+      .reduce((s, x) => s + ((x.client_epsilons || {})[cid] || 0), 0)).toFixed(3))),
   }));
   setChart("ch-eps", {
     xAxis: { type: "category", data: rounds },

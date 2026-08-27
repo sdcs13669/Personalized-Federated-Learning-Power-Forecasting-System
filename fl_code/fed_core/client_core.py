@@ -145,10 +145,15 @@ def train_client(tensors: list, keys: list[str], model, train_ds, n_train: int,
     else:
         loss = _train_plain(model, train_ds, cfg["lr"], cfg["batch_size"],
                             cfg["local_epochs"], cfg["device"])
-    eps = None
+        eps = None
     if dp is not None:
-        eps = dp_epsilon(n_train, cfg["batch_size"], cfg["local_epochs"],
-                         cfg["round"], eps_sigma, dp["delta"])
+        r = int(cfg["round"])
+        eps_cum = dp_epsilon(n_train, cfg["batch_size"], cfg["local_epochs"],
+                             r, eps_sigma, dp["delta"])
+        eps_prev = (dp_epsilon(n_train, cfg["batch_size"], cfg["local_epochs"],
+                               r - 1, eps_sigma, dp["delta"])
+                    if r > 1 else 0.0)
+        eps = round(float(eps_cum - eps_prev), 6)
     return {"tensors": state_dict_to_tensors(model.state_dict()),
             "n_train": n_train, "eps": eps, "sigma": sigma,
             "loss": loss, "clip_fraction": clip_fraction}

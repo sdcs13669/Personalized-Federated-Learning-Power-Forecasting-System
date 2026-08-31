@@ -165,11 +165,17 @@ class AuditFedAvg(FedAvg):
 
 
 def build_strategy(task: dict, state_keys: list[str], on_round_done=None):
+    # 联邦学习必须等齐所有参与方再开跑：min_* 按 expected_clients 数量设，
+    # 否则一个客户端先连上就开跑、后加入的从中间轮开始，导致演示乱序。
+    expected = task.get("expected_clients", [])
+    n_clients = max(len(expected), 1) if expected else 1
     return AuditFedAvg(
         task=task, state_keys=state_keys, on_round_done=on_round_done,
         fraction_fit=1.0,
         fraction_evaluate=1.0 if task.get("deliver_model") else 0.0,
-        min_fit_clients=1, min_evaluate_clients=1, min_available_clients=1,
+        min_fit_clients=n_clients,
+        min_evaluate_clients=n_clients,
+        min_available_clients=n_clients,
         accept_failures=True,
         initial_parameters=initial_parameters(state_keys),
     )

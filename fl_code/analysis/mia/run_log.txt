@@ -1,0 +1,103 @@
+Device: cuda
+Clients (9): steel_ind_0, tetouan_city_0, tetouan_city_1, tetouan_city_2, lcl_res_0, lcl_res_1, eld_ind_0, eld_ind_1, eld_ind_2
+steel_ind_0     members=   93 nonmembers=  112
+tetouan_city_0  members=   93 nonmembers=  112
+tetouan_city_1  members=   93 nonmembers=  112
+tetouan_city_2  members=   93 nonmembers=  112
+lcl_res_0       members= 1256 nonmembers=  311
+lcl_res_1       members=  927 nonmembers=  230
+eld_ind_0       members= 2000 nonmembers= 2790
+eld_ind_1       members= 2000 nonmembers= 2100
+eld_ind_2       members= 2000 nonmembers=  932
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+
+=== nodp  global=round_030.pt ===
+  steel_ind_0     AUC= 48.9%  bAcc= 52.4%  (n=93/112, drift floor 52.6%)
+  tetouan_city_0  AUC= 43.8%  bAcc= 52.7%  (n=93/112, drift floor 43.8%)
+  tetouan_city_1  AUC= 39.8%  bAcc= 50.5%  (n=93/112, drift floor 44.2%)
+  tetouan_city_2  AUC= 62.4%  bAcc= 62.4%  (n=93/112, drift floor 58.2%)
+  lcl_res_0       AUC= 53.4%  bAcc= 53.5%  (n=1256/311, drift floor 52.6%)
+  lcl_res_1       AUC= 51.0%  bAcc= 52.0%  (n=927/230, drift floor 50.7%)
+  eld_ind_0       AUC= 57.4%  bAcc= 56.1%  (n=2000/2790, drift floor 52.2%)
+  eld_ind_1       AUC= 51.9%  bAcc= 52.2%  (n=2000/2100, drift floor 49.2%)
+  eld_ind_2       AUC= 52.0%  bAcc= 52.5%  (n=2000/932, drift floor 51.0%)
+  [nodp    ] macro AUC=51.18%  macro bAcc=53.80%
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+
+=== dp-0.5  global=round_030.pt ===
+  steel_ind_0     AUC= 44.7%  bAcc= 51.4%  (n=93/112, drift floor 52.6%)
+  tetouan_city_0  AUC= 47.0%  bAcc= 54.0%  (n=93/112, drift floor 43.8%)
+  tetouan_city_1  AUC= 53.6%  bAcc= 57.3%  (n=93/112, drift floor 44.2%)
+  tetouan_city_2  AUC= 67.6%  bAcc= 65.7%  (n=93/112, drift floor 58.2%)
+  lcl_res_0       AUC= 50.9%  bAcc= 52.1%  (n=1256/311, drift floor 52.6%)
+  lcl_res_1       AUC= 51.9%  bAcc= 53.3%  (n=927/230, drift floor 50.7%)
+  eld_ind_0       AUC= 50.6%  bAcc= 51.2%  (n=2000/2790, drift floor 52.2%)
+  eld_ind_1       AUC= 49.0%  bAcc= 50.2%  (n=2000/2100, drift floor 49.2%)
+  eld_ind_2       AUC= 50.6%  bAcc= 51.6%  (n=2000/932, drift floor 51.0%)
+  [dp-0.5  ] macro AUC=51.76%  macro bAcc=54.09%
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+
+=== dp-1.5  global=round_030.pt ===
+  steel_ind_0     AUC= 45.3%  bAcc= 51.3%  (n=93/112, drift floor 52.6%)
+  tetouan_city_0  AUC= 51.1%  bAcc= 53.9%  (n=93/112, drift floor 43.8%)
+  tetouan_city_1  AUC= 42.8%  bAcc= 50.9%  (n=93/112, drift floor 44.2%)
+  tetouan_city_2  AUC= 68.3%  bAcc= 70.6%  (n=93/112, drift floor 58.2%)
+  lcl_res_0       AUC= 51.6%  bAcc= 52.7%  (n=1256/311, drift floor 52.6%)
+  lcl_res_1       AUC= 51.7%  bAcc= 52.7%  (n=927/230, drift floor 50.7%)
+  eld_ind_0       AUC= 51.5%  bAcc= 51.9%  (n=2000/2790, drift floor 52.2%)
+  eld_ind_1       AUC= 48.9%  bAcc= 50.5%  (n=2000/2100, drift floor 49.2%)
+  eld_ind_2       AUC= 50.4%  bAcc= 52.2%  (n=2000/932, drift floor 51.0%)
+  [dp-1.5  ] macro AUC=51.28%  macro bAcc=54.08%
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+
+=== dp-3.5  global=round_030.pt ===
+  steel_ind_0     AUC= 49.0%  bAcc= 53.0%  (n=93/112, drift floor 52.6%)
+  tetouan_city_0  AUC= 53.3%  bAcc= 60.0%  (n=93/112, drift floor 43.8%)
+  tetouan_city_1  AUC= 50.0%  bAcc= 57.5%  (n=93/112, drift floor 44.2%)
+  tetouan_city_2  AUC= 64.9%  bAcc= 63.0%  (n=93/112, drift floor 58.2%)
+  lcl_res_0       AUC= 50.3%  bAcc= 52.6%  (n=1256/311, drift floor 52.6%)
+  lcl_res_1       AUC= 53.5%  bAcc= 54.5%  (n=927/230, drift floor 50.7%)
+  eld_ind_0       AUC= 50.9%  bAcc= 51.5%  (n=2000/2790, drift floor 52.2%)
+  eld_ind_1       AUC= 48.2%  bAcc= 50.2%  (n=2000/2100, drift floor 49.2%)
+  eld_ind_2       AUC= 50.8%  bAcc= 52.1%  (n=2000/932, drift floor 51.0%)
+  [dp-3.5  ] macro AUC=52.33%  macro bAcc=54.92%
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+
+=== dp-5.5  global=round_030.pt ===
+  steel_ind_0     AUC= 46.7%  bAcc= 51.7%  (n=93/112, drift floor 52.6%)
+  tetouan_city_0  AUC= 45.9%  bAcc= 51.8%  (n=93/112, drift floor 43.8%)
+  tetouan_city_1  AUC= 49.0%  bAcc= 52.1%  (n=93/112, drift floor 44.2%)
+  tetouan_city_2  AUC= 64.7%  bAcc= 64.1%  (n=93/112, drift floor 58.2%)
+  lcl_res_0       AUC= 51.9%  bAcc= 53.0%  (n=1256/311, drift floor 52.6%)
+  lcl_res_1       AUC= 49.9%  bAcc= 52.8%  (n=927/230, drift floor 50.7%)
+  eld_ind_0       AUC= 51.2%  bAcc= 51.9%  (n=2000/2790, drift floor 52.2%)
+  eld_ind_1       AUC= 48.8%  bAcc= 50.2%  (n=2000/2100, drift floor 49.2%)
+  eld_ind_2       AUC= 50.2%  bAcc= 51.4%  (n=2000/932, drift floor 51.0%)
+  [dp-5.5  ] macro AUC=50.91%  macro bAcc=53.23%
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+
+=== dp-7.5  global=round_030.pt ===
+  steel_ind_0     AUC= 49.6%  bAcc= 56.2%  (n=93/112, drift floor 52.6%)
+  tetouan_city_0  AUC= 49.9%  bAcc= 57.2%  (n=93/112, drift floor 43.8%)
+  tetouan_city_1  AUC= 47.7%  bAcc= 52.1%  (n=93/112, drift floor 44.2%)
+  tetouan_city_2  AUC= 64.2%  bAcc= 64.6%  (n=93/112, drift floor 58.2%)
+  lcl_res_0       AUC= 51.6%  bAcc= 52.5%  (n=1256/311, drift floor 52.6%)
+  lcl_res_1       AUC= 51.0%  bAcc= 54.2%  (n=927/230, drift floor 50.7%)
+  eld_ind_0       AUC= 51.2%  bAcc= 51.7%  (n=2000/2790, drift floor 52.2%)
+  eld_ind_1       AUC= 49.5%  bAcc= 50.5%  (n=2000/2100, drift floor 49.2%)
+  eld_ind_2       AUC= 50.6%  bAcc= 52.3%  (n=2000/932, drift floor 51.0%)
+  [dp-7.5  ] macro AUC=51.70%  macro bAcc=54.59%
+[dp-0.5  ] AUC relative drop vs nodp = -1.1%  bAcc relative drop = -0.5%
+[dp-1.5  ] AUC relative drop vs nodp = -0.2%  bAcc relative drop = -0.5%
+[dp-3.5  ] AUC relative drop vs nodp = -2.2%  bAcc relative drop = -2.1%
+[dp-5.5  ] AUC relative drop vs nodp = 0.5%  bAcc relative drop = 1.1%
+[dp-7.5  ] AUC relative drop vs nodp = -1.0%  bAcc relative drop = -1.5%
+
+Saved JSON: C:\Users\qq283\Desktop\Personalized-Federated-Learning-Power-Forecasting-System\fl_code\analysis\mia\mia_results.json
+Saved: C:\Users\qq283\Desktop\Personalized-Federated-Learning-Power-Forecasting-System\fl_code\analysis\figs\fig_mia_epsilon.png

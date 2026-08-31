@@ -1,0 +1,1056 @@
+{
+  "script": "fl_code.coverage_eval",
+  "args": {
+    "eps": "['0.5', '1.5', '3.5', '5.5', '7.5']",
+    "round": "30",
+    "max_windows": "3000",
+    "max_chain_windows": "20000",
+    "clients": "None",
+    "output_json": "None",
+    "fig_dir": "None",
+    "device": "None"
+  },
+  "models": {
+    "0.5": "C:\\Users\\qq283\\Desktop\\Personalized-Federated-Learning-Power-Forecasting-System\\fl_code\\baseline_outputs\\dp\\epsilon-0.5\\checkpoints\\round_030.pt",
+    "1.5": "C:\\Users\\qq283\\Desktop\\Personalized-Federated-Learning-Power-Forecasting-System\\fl_code\\baseline_outputs\\dp\\epsilon-1.5\\checkpoints\\round_030.pt",
+    "3.5": "C:\\Users\\qq283\\Desktop\\Personalized-Federated-Learning-Power-Forecasting-System\\fl_code\\baseline_outputs\\dp\\epsilon-3.5\\checkpoints\\round_030.pt",
+    "5.5": "C:\\Users\\qq283\\Desktop\\Personalized-Federated-Learning-Power-Forecasting-System\\fl_code\\baseline_outputs\\dp\\epsilon-5.5\\checkpoints\\round_030.pt",
+    "7.5": "C:\\Users\\qq283\\Desktop\\Personalized-Federated-Learning-Power-Forecasting-System\\fl_code\\baseline_outputs\\dp\\epsilon-7.5\\checkpoints\\round_030.pt"
+  },
+  "best_rc": {
+    "0.5": {
+      "steel_ind_0": "tcn",
+      "tetouan_city_0": "mlp",
+      "tetouan_city_1": "lstm",
+      "tetouan_city_2": "lstm",
+      "lcl_res_0": "tcn",
+      "lcl_res_1": "lstm",
+      "eld_ind_0": "mlp",
+      "eld_ind_1": "mlp",
+      "eld_ind_2": "tcn"
+    },
+    "1.5": {
+      "steel_ind_0": "tcn",
+      "tetouan_city_0": "lstm",
+      "tetouan_city_1": "lstm",
+      "tetouan_city_2": "lstm",
+      "lcl_res_0": "tcn",
+      "lcl_res_1": "tcn",
+      "eld_ind_0": "lstm",
+      "eld_ind_1": "mlp",
+      "eld_ind_2": "tcn"
+    },
+    "3.5": {
+      "steel_ind_0": "mlp",
+      "tetouan_city_0": "tcn",
+      "tetouan_city_1": "lstm",
+      "tetouan_city_2": "tcn",
+      "lcl_res_0": "lstm",
+      "lcl_res_1": "tcn",
+      "eld_ind_0": "mlp",
+      "eld_ind_1": "mlp",
+      "eld_ind_2": "tcn"
+    },
+    "5.5": {
+      "steel_ind_0": "tcn",
+      "tetouan_city_0": "mlp",
+      "tetouan_city_1": "lstm",
+      "tetouan_city_2": "lstm",
+      "lcl_res_0": "tcn",
+      "lcl_res_1": "tcn",
+      "eld_ind_0": "mlp",
+      "eld_ind_1": "mlp",
+      "eld_ind_2": "mlp"
+    },
+    "7.5": {
+      "steel_ind_0": "tcn",
+      "tetouan_city_0": "lstm",
+      "tetouan_city_1": "tcn",
+      "tetouan_city_2": "lstm",
+      "lcl_res_0": "lstm",
+      "lcl_res_1": "tcn",
+      "eld_ind_0": "mlp",
+      "eld_ind_1": "mlp",
+      "eld_ind_2": "tcn"
+    }
+  },
+  "note": "P10-P90 coverage of dp+best-RC (per-client best corrector by dp+rc WAPE) on the test portion, raw kWh units; final-round DP global checkpoints; per-client recording capped at --max-windows with the prev-residual chain intact",
+  "client_order": [
+    "steel_ind_0",
+    "tetouan_city_0",
+    "tetouan_city_1",
+    "tetouan_city_2",
+    "lcl_res_0",
+    "lcl_res_1",
+    "eld_ind_0",
+    "eld_ind_1",
+    "eld_ind_2"
+  ],
+  "per_client": {
+    "steel_ind_0": {
+      "0.5": {
+        "n": 3360,
+        "recorded_windows": 560,
+        "evaluated_windows": 560,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.7342261904761904,
+        "p10_coverage": 0.8038690476190476,
+        "p90_coverage": 0.9303571428571429,
+        "mean_width_kwh": 28.276742935180664,
+        "median_width_kwh": 6.482660293579102,
+        "pinaw": 0.18312792479991913,
+        "seq_range_kwh": {
+          "min": 154.40977478027344,
+          "median": 154.40977478027344,
+          "max": 154.40977478027344
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.31884709000587463
+      },
+      "1.5": {
+        "n": 3360,
+        "recorded_windows": 560,
+        "evaluated_windows": 560,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.8413690476190476,
+        "p10_coverage": 0.881547619047619,
+        "p90_coverage": 0.9598214285714286,
+        "mean_width_kwh": 36.29154968261719,
+        "median_width_kwh": 10.277853965759277,
+        "pinaw": 0.2350340336561203,
+        "seq_range_kwh": {
+          "min": 154.40977478027344,
+          "median": 154.40977478027344,
+          "max": 154.40977478027344
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.3475762605667114
+      },
+      "3.5": {
+        "n": 3360,
+        "recorded_windows": 560,
+        "evaluated_windows": 560,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.8464285714285714,
+        "p10_coverage": 0.9148809523809524,
+        "p90_coverage": 0.9315476190476191,
+        "mean_width_kwh": 36.296295166015625,
+        "median_width_kwh": 11.46511459350586,
+        "pinaw": 0.23506473004817963,
+        "seq_range_kwh": {
+          "min": 154.40977478027344,
+          "median": 154.40977478027344,
+          "max": 154.40977478027344
+        },
+        "rc_type": "mlp",
+        "rc_wape_selection": 0.30057093501091003
+      },
+      "5.5": {
+        "n": 3360,
+        "recorded_windows": 560,
+        "evaluated_windows": 560,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.7202380952380952,
+        "p10_coverage": 0.7511904761904762,
+        "p90_coverage": 0.969047619047619,
+        "mean_width_kwh": 31.323936462402344,
+        "median_width_kwh": 9.118107795715332,
+        "pinaw": 0.20286239683628082,
+        "seq_range_kwh": {
+          "min": 154.40977478027344,
+          "median": 154.40977478027344,
+          "max": 154.40977478027344
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.3039317727088928
+      },
+      "7.5": {
+        "n": 3360,
+        "recorded_windows": 560,
+        "evaluated_windows": 560,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.7089285714285715,
+        "p10_coverage": 0.8261904761904761,
+        "p90_coverage": 0.8827380952380952,
+        "mean_width_kwh": 26.722883224487305,
+        "median_width_kwh": 7.817577362060547,
+        "pinaw": 0.17306473851203918,
+        "seq_range_kwh": {
+          "min": 154.40977478027344,
+          "median": 154.40977478027344,
+          "max": 154.40977478027344
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.3296062648296356
+      }
+    },
+    "tetouan_city_0": {
+      "0.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.7807646356033453,
+        "p10_coverage": 0.8775388291517324,
+        "p90_coverage": 0.9032258064516129,
+        "mean_width_kwh": 5568.2548828125,
+        "median_width_kwh": 5537.451171875,
+        "pinaw": 0.1938263326883316,
+        "seq_range_kwh": {
+          "min": 28728.0625,
+          "median": 28728.0625,
+          "max": 28728.0625
+        },
+        "rc_type": "mlp",
+        "rc_wape_selection": 0.0641169399023056
+      },
+      "1.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.850358422939068,
+        "p10_coverage": 0.9453405017921147,
+        "p90_coverage": 0.9050179211469535,
+        "mean_width_kwh": 5931.3369140625,
+        "median_width_kwh": 5908.533203125,
+        "pinaw": 0.20646490156650543,
+        "seq_range_kwh": {
+          "min": 28728.0625,
+          "median": 28728.0625,
+          "max": 28728.0625
+        },
+        "rc_type": "lstm",
+        "rc_wape_selection": 0.05701834335923195
+      },
+      "3.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.5734767025089605,
+        "p10_coverage": 0.7335722819593787,
+        "p90_coverage": 0.8399044205495818,
+        "mean_width_kwh": 2982.490966796875,
+        "median_width_kwh": 2827.9267578125,
+        "pinaw": 0.10381805151700974,
+        "seq_range_kwh": {
+          "min": 28728.0625,
+          "median": 28728.0625,
+          "max": 28728.0625
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.06649497896432877
+      },
+      "5.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.7789725209080047,
+        "p10_coverage": 0.8629032258064516,
+        "p90_coverage": 0.9160692951015532,
+        "mean_width_kwh": 5365.91162109375,
+        "median_width_kwh": 5266.5576171875,
+        "pinaw": 0.18678291141986847,
+        "seq_range_kwh": {
+          "min": 28728.0625,
+          "median": 28728.0625,
+          "max": 28728.0625
+        },
+        "rc_type": "mlp",
+        "rc_wape_selection": 0.06175908446311951
+      },
+      "7.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.6762246117084827,
+        "p10_coverage": 0.9071087216248507,
+        "p90_coverage": 0.769115890083632,
+        "mean_width_kwh": 3901.535888671875,
+        "median_width_kwh": 3599.6103515625,
+        "pinaw": 0.13580922782421112,
+        "seq_range_kwh": {
+          "min": 28728.0625,
+          "median": 28728.0625,
+          "max": 28728.0625
+        },
+        "rc_type": "lstm",
+        "rc_wape_selection": 0.06851192563772202
+      }
+    },
+    "tetouan_city_1": {
+      "0.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.704599761051374,
+        "p10_coverage": 0.8736559139784946,
+        "p90_coverage": 0.8309438470728794,
+        "mean_width_kwh": 4144.02978515625,
+        "median_width_kwh": 3698.9365234375,
+        "pinaw": 0.1777799129486084,
+        "seq_range_kwh": {
+          "min": 23309.88671875,
+          "median": 23309.88671875,
+          "max": 23309.88671875
+        },
+        "rc_type": "lstm",
+        "rc_wape_selection": 0.06874383240938187
+      },
+      "1.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.8491636798088411,
+        "p10_coverage": 0.9626642771804063,
+        "p90_coverage": 0.8864994026284349,
+        "mean_width_kwh": 5108.88232421875,
+        "median_width_kwh": 5180.65625,
+        "pinaw": 0.21917232871055603,
+        "seq_range_kwh": {
+          "min": 23309.88671875,
+          "median": 23309.88671875,
+          "max": 23309.88671875
+        },
+        "rc_type": "lstm",
+        "rc_wape_selection": 0.06208503618836403
+      },
+      "3.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.8416965352449224,
+        "p10_coverage": 0.954599761051374,
+        "p90_coverage": 0.8870967741935484,
+        "mean_width_kwh": 4816.26904296875,
+        "median_width_kwh": 4963.1845703125,
+        "pinaw": 0.20661915838718414,
+        "seq_range_kwh": {
+          "min": 23309.88671875,
+          "median": 23309.88671875,
+          "max": 23309.88671875
+        },
+        "rc_type": "lstm",
+        "rc_wape_selection": 0.06921186298131943
+      },
+      "5.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.6780167264038232,
+        "p10_coverage": 0.8539426523297491,
+        "p90_coverage": 0.8240740740740741,
+        "mean_width_kwh": 3862.8662109375,
+        "median_width_kwh": 3766.1416015625,
+        "pinaw": 0.1657179296016693,
+        "seq_range_kwh": {
+          "min": 23309.88671875,
+          "median": 23309.88671875,
+          "max": 23309.88671875
+        },
+        "rc_type": "lstm",
+        "rc_wape_selection": 0.06748375296592712
+      },
+      "7.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.6836917562724014,
+        "p10_coverage": 0.9330943847072879,
+        "p90_coverage": 0.7505973715651135,
+        "mean_width_kwh": 3358.38720703125,
+        "median_width_kwh": 3263.2841796875,
+        "pinaw": 0.1440756469964981,
+        "seq_range_kwh": {
+          "min": 23309.88671875,
+          "median": 23309.88671875,
+          "max": 23309.88671875
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.06594397127628326
+      }
+    },
+    "tetouan_city_2": {
+      "0.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.7359617682198327,
+        "p10_coverage": 0.8384109916367981,
+        "p90_coverage": 0.8975507765830346,
+        "mean_width_kwh": 3458.7939453125,
+        "median_width_kwh": 3539.37353515625,
+        "pinaw": 0.20972047746181488,
+        "seq_range_kwh": {
+          "min": 16492.3984375,
+          "median": 16492.3984375,
+          "max": 16492.3984375
+        },
+        "rc_type": "lstm",
+        "rc_wape_selection": 0.11643939465284348
+      },
+      "1.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.8145161290322581,
+        "p10_coverage": 0.9262246117084827,
+        "p90_coverage": 0.8882915173237754,
+        "mean_width_kwh": 3468.872802734375,
+        "median_width_kwh": 3594.560546875,
+        "pinaw": 0.21033163368701935,
+        "seq_range_kwh": {
+          "min": 16492.3984375,
+          "median": 16492.3984375,
+          "max": 16492.3984375
+        },
+        "rc_type": "lstm",
+        "rc_wape_selection": 0.10320005565881729
+      },
+      "3.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.6045400238948626,
+        "p10_coverage": 0.7625448028673835,
+        "p90_coverage": 0.8419952210274791,
+        "mean_width_kwh": 2776.117431640625,
+        "median_width_kwh": 2728.638671875,
+        "pinaw": 0.16832710802555084,
+        "seq_range_kwh": {
+          "min": 16492.3984375,
+          "median": 16492.3984375,
+          "max": 16492.3984375
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.12516897916793823
+      },
+      "5.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.7562724014336918,
+        "p10_coverage": 0.8661887694145759,
+        "p90_coverage": 0.8900836320191159,
+        "mean_width_kwh": 3375.75927734375,
+        "median_width_kwh": 3449.3681640625,
+        "pinaw": 0.204685777425766,
+        "seq_range_kwh": {
+          "min": 16492.3984375,
+          "median": 16492.3984375,
+          "max": 16492.3984375
+        },
+        "rc_type": "lstm",
+        "rc_wape_selection": 0.11129456013441086
+      },
+      "7.5": {
+        "n": 3348,
+        "recorded_windows": 558,
+        "evaluated_windows": 558,
+        "evaluated_sequences": 1,
+        "k": 1,
+        "coverage": 0.7712066905615292,
+        "p10_coverage": 0.8757467144563919,
+        "p90_coverage": 0.8954599761051374,
+        "mean_width_kwh": 3324.281982421875,
+        "median_width_kwh": 3296.74365234375,
+        "pinaw": 0.2015644907951355,
+        "seq_range_kwh": {
+          "min": 16492.3984375,
+          "median": 16492.3984375,
+          "max": 16492.3984375
+        },
+        "rc_type": "lstm",
+        "rc_wape_selection": 0.10746923089027405
+      }
+    },
+    "lcl_res_0": {
+      "0.5": {
+        "n": 15456,
+        "recorded_windows": 2576,
+        "evaluated_windows": 7726,
+        "evaluated_sequences": 6,
+        "k": 3,
+        "coverage": 0.7211438923395446,
+        "p10_coverage": 0.828610248447205,
+        "p90_coverage": 0.8925336438923396,
+        "mean_width_kwh": 1.9224562644958496,
+        "median_width_kwh": 1.8898258209228516,
+        "pinaw": 0.1524636298418045,
+        "seq_range_kwh": {
+          "min": 9.748880386352539,
+          "median": 13.023299217224121,
+          "max": 14.769425392150879
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.1113983616232872
+      },
+      "1.5": {
+        "n": 15456,
+        "recorded_windows": 2576,
+        "evaluated_windows": 7726,
+        "evaluated_sequences": 6,
+        "k": 3,
+        "coverage": 0.7435947204968945,
+        "p10_coverage": 0.8819228778467909,
+        "p90_coverage": 0.8616718426501035,
+        "mean_width_kwh": 1.8996902704238892,
+        "median_width_kwh": 1.8541712760925293,
+        "pinaw": 0.15077751874923706,
+        "seq_range_kwh": {
+          "min": 9.748880386352539,
+          "median": 13.023299217224121,
+          "max": 14.769425392150879
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.10847275704145432
+      },
+      "3.5": {
+        "n": 15456,
+        "recorded_windows": 2576,
+        "evaluated_windows": 7726,
+        "evaluated_sequences": 6,
+        "k": 3,
+        "coverage": 0.7435947204968945,
+        "p10_coverage": 0.8465967908902692,
+        "p90_coverage": 0.8969979296066253,
+        "mean_width_kwh": 1.957204818725586,
+        "median_width_kwh": 1.9186532497406006,
+        "pinaw": 0.1551820933818817,
+        "seq_range_kwh": {
+          "min": 9.748880386352539,
+          "median": 13.023299217224121,
+          "max": 14.769425392150879
+        },
+        "rc_type": "lstm",
+        "rc_wape_selection": 0.10939614474773407
+      },
+      "5.5": {
+        "n": 15456,
+        "recorded_windows": 2576,
+        "evaluated_windows": 7726,
+        "evaluated_sequences": 6,
+        "k": 3,
+        "coverage": 0.7443064182194618,
+        "p10_coverage": 0.8777173913043478,
+        "p90_coverage": 0.8665890269151139,
+        "mean_width_kwh": 1.9024856090545654,
+        "median_width_kwh": 1.852074146270752,
+        "pinaw": 0.15072864294052124,
+        "seq_range_kwh": {
+          "min": 9.748880386352539,
+          "median": 13.023299217224121,
+          "max": 14.769425392150879
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.10927890986204147
+      },
+      "7.5": {
+        "n": 15456,
+        "recorded_windows": 2576,
+        "evaluated_windows": 7726,
+        "evaluated_sequences": 6,
+        "k": 3,
+        "coverage": 0.7278726708074534,
+        "p10_coverage": 0.8399974120082816,
+        "p90_coverage": 0.8878752587991718,
+        "mean_width_kwh": 1.9327640533447266,
+        "median_width_kwh": 1.8839302062988281,
+        "pinaw": 0.15322108566761017,
+        "seq_range_kwh": {
+          "min": 9.748880386352539,
+          "median": 13.023299217224121,
+          "max": 14.769425392150879
+        },
+        "rc_type": "lstm",
+        "rc_wape_selection": 0.11039339005947113
+      }
+    },
+    "lcl_res_1": {
+      "0.5": {
+        "n": 17058,
+        "recorded_windows": 2843,
+        "evaluated_windows": 5685,
+        "evaluated_sequences": 5,
+        "k": 2,
+        "coverage": 0.7450463125806074,
+        "p10_coverage": 0.8459960136006566,
+        "p90_coverage": 0.8990502989799507,
+        "mean_width_kwh": 2.201714277267456,
+        "median_width_kwh": 2.0738635063171387,
+        "pinaw": 0.18211376667022705,
+        "seq_range_kwh": {
+          "min": 7.906513690948486,
+          "median": 12.347274780273438,
+          "max": 14.990561485290527
+        },
+        "rc_type": "lstm",
+        "rc_wape_selection": 0.12378324568271637
+      },
+      "1.5": {
+        "n": 17058,
+        "recorded_windows": 2843,
+        "evaluated_windows": 5685,
+        "evaluated_sequences": 5,
+        "k": 2,
+        "coverage": 0.735607925899871,
+        "p10_coverage": 0.8640520576855435,
+        "p90_coverage": 0.8715558682143276,
+        "mean_width_kwh": 2.1099727153778076,
+        "median_width_kwh": 2.01284122467041,
+        "pinaw": 0.1744975596666336,
+        "seq_range_kwh": {
+          "min": 7.906513690948486,
+          "median": 12.347274780273438,
+          "max": 14.990561485290527
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.1193719282746315
+      },
+      "3.5": {
+        "n": 17058,
+        "recorded_windows": 2843,
+        "evaluated_windows": 5685,
+        "evaluated_sequences": 5,
+        "k": 2,
+        "coverage": 0.7422323836323133,
+        "p10_coverage": 0.8535584476491969,
+        "p90_coverage": 0.8886739359831164,
+        "mean_width_kwh": 2.133641004562378,
+        "median_width_kwh": 2.0480971336364746,
+        "pinaw": 0.17720969021320343,
+        "seq_range_kwh": {
+          "min": 7.906513690948486,
+          "median": 12.347274780273438,
+          "max": 14.990561485290527
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.11881615966558456
+      },
+      "5.5": {
+        "n": 17058,
+        "recorded_windows": 2843,
+        "evaluated_windows": 5685,
+        "evaluated_sequences": 5,
+        "k": 2,
+        "coverage": 0.7227107515535233,
+        "p10_coverage": 0.8437096963301677,
+        "p90_coverage": 0.8790010552233556,
+        "mean_width_kwh": 2.114640951156616,
+        "median_width_kwh": 2.0621416568756104,
+        "pinaw": 0.17493930459022522,
+        "seq_range_kwh": {
+          "min": 7.906513690948486,
+          "median": 12.347274780273438,
+          "max": 14.990561485290527
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.12150619179010391
+      },
+      "7.5": {
+        "n": 17058,
+        "recorded_windows": 2843,
+        "evaluated_windows": 5685,
+        "evaluated_sequences": 5,
+        "k": 2,
+        "coverage": 0.724469457146207,
+        "p10_coverage": 0.8478133427130965,
+        "p90_coverage": 0.8766561144331105,
+        "mean_width_kwh": 2.0981228351593018,
+        "median_width_kwh": 2.000152111053467,
+        "pinaw": 0.17410285770893097,
+        "seq_range_kwh": {
+          "min": 7.906513690948486,
+          "median": 12.347274780273438,
+          "max": 14.990561485290527
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.12322837859392166
+      }
+    },
+    "eld_ind_0": {
+      "0.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 9,
+        "k": 7,
+        "coverage": 0.6582108700723116,
+        "p10_coverage": 0.8463960811756474,
+        "p90_coverage": 0.8118147888966644,
+        "mean_width_kwh": 118.2261734008789,
+        "median_width_kwh": 77.29420471191406,
+        "pinaw": 0.11920932680368423,
+        "seq_range_kwh": {
+          "min": 67.20735168457031,
+          "median": 338.8141784667969,
+          "max": 40520.796875
+        },
+        "rc_type": "mlp",
+        "rc_wape_selection": 0.06755615770816803
+      },
+      "1.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 9,
+        "k": 7,
+        "coverage": 0.6239211569862375,
+        "p10_coverage": 0.8415558665733613,
+        "p90_coverage": 0.7823652904128762,
+        "mean_width_kwh": 108.92195129394531,
+        "median_width_kwh": 67.65777587890625,
+        "pinaw": 0.10974027216434479,
+        "seq_range_kwh": {
+          "min": 67.20735168457031,
+          "median": 338.8141784667969,
+          "max": 40520.796875
+        },
+        "rc_type": "lstm",
+        "rc_wape_selection": 0.06941750645637512
+      },
+      "3.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 9,
+        "k": 7,
+        "coverage": 0.6731980405878236,
+        "p10_coverage": 0.8400396547702356,
+        "p90_coverage": 0.833158385817588,
+        "mean_width_kwh": 117.29094696044922,
+        "median_width_kwh": 77.98794555664062,
+        "pinaw": 0.11917343735694885,
+        "seq_range_kwh": {
+          "min": 67.20735168457031,
+          "median": 338.8141784667969,
+          "max": 40520.796875
+        },
+        "rc_type": "mlp",
+        "rc_wape_selection": 0.06950099021196365
+      },
+      "5.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 9,
+        "k": 7,
+        "coverage": 0.6684161418241195,
+        "p10_coverage": 0.8385817588056916,
+        "p90_coverage": 0.8298343830184278,
+        "mean_width_kwh": 113.71734619140625,
+        "median_width_kwh": 76.0416259765625,
+        "pinaw": 0.1150425598025322,
+        "seq_range_kwh": {
+          "min": 67.20735168457031,
+          "median": 338.8141784667969,
+          "max": 40520.796875
+        },
+        "rc_type": "mlp",
+        "rc_wape_selection": 0.06731408089399338
+      },
+      "7.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 9,
+        "k": 7,
+        "coverage": 0.6607767669699091,
+        "p10_coverage": 0.8427221833449965,
+        "p90_coverage": 0.8180545836249126,
+        "mean_width_kwh": 117.7092056274414,
+        "median_width_kwh": 73.765625,
+        "pinaw": 0.11872164160013199,
+        "seq_range_kwh": {
+          "min": 67.20735168457031,
+          "median": 338.8141784667969,
+          "max": 40520.796875
+        },
+        "rc_type": "mlp",
+        "rc_wape_selection": 0.06856591999530792
+      }
+    },
+    "eld_ind_1": {
+      "0.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 12,
+        "k": 7,
+        "coverage": 0.7329717751341265,
+        "p10_coverage": 0.8933403312339632,
+        "p90_coverage": 0.8396314439001633,
+        "mean_width_kwh": 18.345491409301758,
+        "median_width_kwh": 11.979795455932617,
+        "pinaw": 0.11509004980325699,
+        "seq_range_kwh": {
+          "min": 3.0408337116241455,
+          "median": 93.00494384765625,
+          "max": 514.3770141601562
+        },
+        "rc_type": "mlp",
+        "rc_wape_selection": 0.10230567306280136
+      },
+      "1.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 12,
+        "k": 7,
+        "coverage": 0.7354793561931421,
+        "p10_coverage": 0.8809773734546302,
+        "p90_coverage": 0.8545019827385117,
+        "mean_width_kwh": 18.768638610839844,
+        "median_width_kwh": 12.209203720092773,
+        "pinaw": 0.11686543375253677,
+        "seq_range_kwh": {
+          "min": 3.0408337116241455,
+          "median": 93.00494384765625,
+          "max": 514.3770141601562
+        },
+        "rc_type": "mlp",
+        "rc_wape_selection": 0.10298581421375275
+      },
+      "3.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 12,
+        "k": 7,
+        "coverage": 0.7451014695591323,
+        "p10_coverage": 0.8917074877536739,
+        "p90_coverage": 0.8533939818054583,
+        "mean_width_kwh": 18.713054656982422,
+        "median_width_kwh": 12.462785720825195,
+        "pinaw": 0.11791802942752838,
+        "seq_range_kwh": {
+          "min": 3.0408337116241455,
+          "median": 93.00494384765625,
+          "max": 514.3770141601562
+        },
+        "rc_type": "mlp",
+        "rc_wape_selection": 0.10502589493989944
+      },
+      "5.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 12,
+        "k": 7,
+        "coverage": 0.7356543037088873,
+        "p10_coverage": 0.8853510613482621,
+        "p90_coverage": 0.8503032423606252,
+        "mean_width_kwh": 18.81870460510254,
+        "median_width_kwh": 12.134515762329102,
+        "pinaw": 0.11586419492959976,
+        "seq_range_kwh": {
+          "min": 3.0408337116241455,
+          "median": 93.00494384765625,
+          "max": 514.3770141601562
+        },
+        "rc_type": "mlp",
+        "rc_wape_selection": 0.10562271624803543
+      },
+      "7.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 12,
+        "k": 7,
+        "coverage": 0.7269652437602053,
+        "p10_coverage": 0.8993468626078843,
+        "p90_coverage": 0.827618381152321,
+        "mean_width_kwh": 18.674903869628906,
+        "median_width_kwh": 12.024083137512207,
+        "pinaw": 0.11425101011991501,
+        "seq_range_kwh": {
+          "min": 3.0408337116241455,
+          "median": 93.00494384765625,
+          "max": 514.3770141601562
+        },
+        "rc_type": "mlp",
+        "rc_wape_selection": 0.10407799482345581
+      }
+    },
+    "eld_ind_2": {
+      "0.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 31,
+        "k": 7,
+        "coverage": 0.7178679729414509,
+        "p10_coverage": 0.8733963144390017,
+        "p90_coverage": 0.8444716585024493,
+        "mean_width_kwh": 31.15024757385254,
+        "median_width_kwh": 12.007869720458984,
+        "pinaw": 0.1179811954498291,
+        "seq_range_kwh": {
+          "min": 4.775203704833984,
+          "median": 113.46150207519531,
+          "max": 4801.083984375
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.06488250195980072
+      },
+      "1.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 31,
+        "k": 7,
+        "coverage": 0.75,
+        "p10_coverage": 0.8705388383484954,
+        "p90_coverage": 0.8794611616515046,
+        "mean_width_kwh": 34.013267517089844,
+        "median_width_kwh": 12.923072814941406,
+        "pinaw": 0.12708115577697754,
+        "seq_range_kwh": {
+          "min": 4.775203704833984,
+          "median": 113.46150207519531,
+          "max": 4801.083984375
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.06526294350624084
+      },
+      "3.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 31,
+        "k": 7,
+        "coverage": 0.7406111499883369,
+        "p10_coverage": 0.8715885234429671,
+        "p90_coverage": 0.8690226265453698,
+        "mean_width_kwh": 32.946022033691406,
+        "median_width_kwh": 12.861309051513672,
+        "pinaw": 0.12629200518131256,
+        "seq_range_kwh": {
+          "min": 4.775203704833984,
+          "median": 113.46150207519531,
+          "max": 4801.083984375
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.06509797275066376
+      },
+      "5.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 31,
+        "k": 7,
+        "coverage": 0.7322136692325636,
+        "p10_coverage": 0.8622579892698857,
+        "p90_coverage": 0.8699556799626779,
+        "mean_width_kwh": 34.9190788269043,
+        "median_width_kwh": 13.59347152709961,
+        "pinaw": 0.1354198306798935,
+        "seq_range_kwh": {
+          "min": 4.775203704833984,
+          "median": 113.46150207519531,
+          "max": 4801.083984375
+        },
+        "rc_type": "mlp",
+        "rc_wape_selection": 0.06650308519601822
+      },
+      "7.5": {
+        "n": 17148,
+        "recorded_windows": 2858,
+        "evaluated_windows": 20000,
+        "evaluated_sequences": 31,
+        "k": 7,
+        "coverage": 0.7222416608350828,
+        "p10_coverage": 0.8444716585024493,
+        "p90_coverage": 0.8777700023326336,
+        "mean_width_kwh": 32.20464324951172,
+        "median_width_kwh": 12.468019485473633,
+        "pinaw": 0.12239518016576767,
+        "seq_range_kwh": {
+          "min": 4.775203704833984,
+          "median": 113.46150207519531,
+          "max": 4801.083984375
+        },
+        "rc_type": "tcn",
+        "rc_wape_selection": 0.06419336050748825
+      }
+    }
+  },
+  "aggregate": {
+    "0.5": {
+      "coverage_pooled": 0.7181960107639531,
+      "coverage_macro": 0.725643686490976,
+      "mean_width_kwh": 1485.6890487935807,
+      "pinaw_macro": 0.1612569573852751,
+      "n_total": 97362,
+      "num_clients": 9,
+      "target": 0.8
+    },
+    "1.5": {
+      "coverage_pooled": 0.7339311024835151,
+      "coverage_macro": 0.7715567154417067,
+      "mean_width_kwh": 1634.5663456784355,
+      "pinaw_macro": 0.17221831530332565,
+      "n_total": 97362,
+      "num_clients": 9,
+      "target": 0.8
+    },
+    "3.5": {
+      "coverage_pooled": 0.7269879419075204,
+      "coverage_macro": 0.723431066371313,
+      "mean_width_kwh": 1198.2460673385197,
+      "pinaw_macro": 0.15662270039319992,
+      "n_total": 97362,
+      "num_clients": 9,
+      "target": 0.8
+    },
+    "5.5": {
+      "coverage_pooled": 0.7219962613750744,
+      "coverage_macro": 0.7263112253913523,
+      "mean_width_kwh": 1423.0370335578918,
+      "pinaw_macro": 0.16133817202515072,
+      "n_total": 97362,
+      "num_clients": 9,
+      "target": 0.8
+    },
+    "7.5": {
+      "coverage_pooled": 0.7118485651486206,
+      "coverage_macro": 0.7113752699433158,
+      "mean_width_kwh": 1198.1719556649525,
+      "pinaw_macro": 0.14857843104335997,
+      "n_total": 97362,
+      "num_clients": 9,
+      "target": 0.8
+    }
+  }
+}

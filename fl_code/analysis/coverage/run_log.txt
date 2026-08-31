@@ -1,0 +1,112 @@
+Device: cuda
+Clients (9): steel_ind_0, tetouan_city_0, tetouan_city_1, tetouan_city_2, lcl_res_0, lcl_res_1, eld_ind_0, eld_ind_1, eld_ind_2
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+
+=== ε=0.5  global=round_030.pt ===
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  steel_ind_0     rc=tcn  n=  3360 coverage= 73.4%  (P10≥: 80.4% P90≤: 93.0%) width=28.3 kWh
+  tetouan_city_0  rc=mlp  n=  3348 coverage= 78.1%  (P10≥: 87.8% P90≤: 90.3%) width=5568.3 kWh
+  tetouan_city_1  rc=lstm n=  3348 coverage= 70.5%  (P10≥: 87.4% P90≤: 83.1%) width=4144.0 kWh
+  tetouan_city_2  rc=lstm n=  3348 coverage= 73.6%  (P10≥: 83.8% P90≤: 89.8%) width=3458.8 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  lcl_res_0       rc=tcn  n= 15456 coverage= 72.1%  (P10≥: 82.9% P90≤: 89.3%) width=1.9 kWh
+  lcl_res_1       rc=lstm n= 17058 coverage= 74.5%  (P10≥: 84.6% P90≤: 89.9%) width=2.2 kWh
+  eld_ind_0       rc=mlp  n= 17148 coverage= 65.8%  (P10≥: 84.6% P90≤: 81.2%) width=118.2 kWh
+  eld_ind_1       rc=mlp  n= 17148 coverage= 73.3%  (P10≥: 89.3% P90≤: 84.0%) width=18.3 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  eld_ind_2       rc=tcn  n= 17148 coverage= 71.8%  (P10≥: 87.3% P90≤: 84.4%) width=31.2 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+
+=== ε=1.5  global=round_030.pt ===
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  steel_ind_0     rc=tcn  n=  3360 coverage= 84.1%  (P10≥: 88.2% P90≤: 96.0%) width=36.3 kWh
+  tetouan_city_0  rc=lstm n=  3348 coverage= 85.0%  (P10≥: 94.5% P90≤: 90.5%) width=5931.3 kWh
+  tetouan_city_1  rc=lstm n=  3348 coverage= 84.9%  (P10≥: 96.3% P90≤: 88.6%) width=5108.9 kWh
+  tetouan_city_2  rc=lstm n=  3348 coverage= 81.5%  (P10≥: 92.6% P90≤: 88.8%) width=3468.9 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  lcl_res_0       rc=tcn  n= 15456 coverage= 74.4%  (P10≥: 88.2% P90≤: 86.2%) width=1.9 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  lcl_res_1       rc=tcn  n= 17058 coverage= 73.6%  (P10≥: 86.4% P90≤: 87.2%) width=2.1 kWh
+  eld_ind_0       rc=lstm n= 17148 coverage= 62.4%  (P10≥: 84.2% P90≤: 78.2%) width=108.9 kWh
+  eld_ind_1       rc=mlp  n= 17148 coverage= 73.5%  (P10≥: 88.1% P90≤: 85.5%) width=18.8 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  eld_ind_2       rc=tcn  n= 17148 coverage= 75.0%  (P10≥: 87.1% P90≤: 87.9%) width=34.0 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+
+=== ε=3.5  global=round_030.pt ===
+  steel_ind_0     rc=mlp  n=  3360 coverage= 84.6%  (P10≥: 91.5% P90≤: 93.2%) width=36.3 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  tetouan_city_0  rc=tcn  n=  3348 coverage= 57.3%  (P10≥: 73.4% P90≤: 84.0%) width=2982.5 kWh
+  tetouan_city_1  rc=lstm n=  3348 coverage= 84.2%  (P10≥: 95.5% P90≤: 88.7%) width=4816.3 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  tetouan_city_2  rc=tcn  n=  3348 coverage= 60.5%  (P10≥: 76.3% P90≤: 84.2%) width=2776.1 kWh
+  lcl_res_0       rc=lstm n= 15456 coverage= 74.4%  (P10≥: 84.7% P90≤: 89.7%) width=2.0 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  lcl_res_1       rc=tcn  n= 17058 coverage= 74.2%  (P10≥: 85.4% P90≤: 88.9%) width=2.1 kWh
+  eld_ind_0       rc=mlp  n= 17148 coverage= 67.3%  (P10≥: 84.0% P90≤: 83.3%) width=117.3 kWh
+  eld_ind_1       rc=mlp  n= 17148 coverage= 74.5%  (P10≥: 89.2% P90≤: 85.3%) width=18.7 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  eld_ind_2       rc=tcn  n= 17148 coverage= 74.1%  (P10≥: 87.2% P90≤: 86.9%) width=32.9 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+
+=== ε=5.5  global=round_030.pt ===
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  steel_ind_0     rc=tcn  n=  3360 coverage= 72.0%  (P10≥: 75.1% P90≤: 96.9%) width=31.3 kWh
+  tetouan_city_0  rc=mlp  n=  3348 coverage= 77.9%  (P10≥: 86.3% P90≤: 91.6%) width=5365.9 kWh
+  tetouan_city_1  rc=lstm n=  3348 coverage= 67.8%  (P10≥: 85.4% P90≤: 82.4%) width=3862.9 kWh
+  tetouan_city_2  rc=lstm n=  3348 coverage= 75.6%  (P10≥: 86.6% P90≤: 89.0%) width=3375.8 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  lcl_res_0       rc=tcn  n= 15456 coverage= 74.4%  (P10≥: 87.8% P90≤: 86.7%) width=1.9 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  lcl_res_1       rc=tcn  n= 17058 coverage= 72.3%  (P10≥: 84.4% P90≤: 87.9%) width=2.1 kWh
+  eld_ind_0       rc=mlp  n= 17148 coverage= 66.8%  (P10≥: 83.9% P90≤: 83.0%) width=113.7 kWh
+  eld_ind_1       rc=mlp  n= 17148 coverage= 73.6%  (P10≥: 88.5% P90≤: 85.0%) width=18.8 kWh
+  eld_ind_2       rc=mlp  n= 17148 coverage= 73.2%  (P10≥: 86.2% P90≤: 87.0%) width=34.9 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+
+=== ε=7.5  global=round_030.pt ===
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  steel_ind_0     rc=tcn  n=  3360 coverage= 70.9%  (P10≥: 82.6% P90≤: 88.3%) width=26.7 kWh
+  tetouan_city_0  rc=lstm n=  3348 coverage= 67.6%  (P10≥: 90.7% P90≤: 76.9%) width=3901.5 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  tetouan_city_1  rc=tcn  n=  3348 coverage= 68.4%  (P10≥: 93.3% P90≤: 75.1%) width=3358.4 kWh
+  tetouan_city_2  rc=lstm n=  3348 coverage= 77.1%  (P10≥: 87.6% P90≤: 89.5%) width=3324.3 kWh
+  lcl_res_0       rc=lstm n= 15456 coverage= 72.8%  (P10≥: 84.0% P90≤: 88.8%) width=1.9 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  lcl_res_1       rc=tcn  n= 17058 coverage= 72.4%  (P10≥: 84.8% P90≤: 87.7%) width=2.1 kWh
+  eld_ind_0       rc=mlp  n= 17148 coverage= 66.1%  (P10≥: 84.3% P90≤: 81.8%) width=117.7 kWh
+  eld_ind_1       rc=mlp  n= 17148 coverage= 72.7%  (P10≥: 89.9% P90≤: 82.8%) width=18.7 kWh
+D:\anoconda\envs\fl\lib\site-packages\torch\nn\utils\weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+  eld_ind_2       rc=tcn  n= 17148 coverage= 72.2%  (P10≥: 84.4% P90≤: 87.8%) width=32.2 kWh
+[ε=0.5 ] pooled coverage=71.82%  macro=72.56%  PINAW=16.13%  n=97362
+[ε=1.5 ] pooled coverage=73.39%  macro=77.16%  PINAW=17.22%  n=97362
+[ε=3.5 ] pooled coverage=72.70%  macro=72.34%  PINAW=15.66%  n=97362
+[ε=5.5 ] pooled coverage=72.20%  macro=72.63%  PINAW=16.13%  n=97362
+[ε=7.5 ] pooled coverage=71.18%  macro=71.14%  PINAW=14.86%  n=97362
+
+Saved JSON: C:\Users\qq283\Desktop\Personalized-Federated-Learning-Power-Forecasting-System\fl_code\analysis\coverage\coverage_results.json
+Saved: C:\Users\qq283\Desktop\Personalized-Federated-Learning-Power-Forecasting-System\fl_code\analysis\figs\fig_coverage_epsilon.png
+Saved: C:\Users\qq283\Desktop\Personalized-Federated-Learning-Power-Forecasting-System\fl_code\analysis\figs\fig_pinaw_per_client.png

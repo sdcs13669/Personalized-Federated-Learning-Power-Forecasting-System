@@ -13,10 +13,10 @@ function renderLogin() {
         </div>
         <div class="auth-logo">
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle cx="7" cy="12" r="2.4" stroke="#0c110d" stroke-width="2"/>
-            <circle cx="17" cy="7" r="2.4" stroke="#0c110d" stroke-width="2"/>
-            <circle cx="17" cy="17" r="2.4" stroke="#0c110d" stroke-width="2"/>
-            <path d="M9.2 11.2l5.6-3M9.2 12.8l5.6 3.2" stroke="#0c110d" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="7" cy="12" r="2.4" stroke="#ffffff" stroke-width="2"/>
+            <circle cx="17" cy="7" r="2.4" stroke="#ffffff" stroke-width="2"/>
+            <circle cx="17" cy="17" r="2.4" stroke="#ffffff" stroke-width="2"/>
+            <path d="M9.2 11.2l5.6-3M9.2 12.8l5.6 3.2" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
           </svg>
         </div>
         <h1 class="auth-title">联邦学习平台</h1>
@@ -82,7 +82,7 @@ function initParticleNet() {
         const d2 = dx * dx + dy * dy;
         if (d2 < LINK2) {
           const alpha = (1 - Math.sqrt(d2) / LINK) * .2;
-          ctx.strokeStyle = "rgba(200,240,74," + alpha.toFixed(3) + ")";
+          ctx.strokeStyle = "rgba(37,99,235," + alpha.toFixed(3) + ")";
           ctx.lineWidth = 1;
           ctx.beginPath();
           ctx.moveTo(a.x, a.y);
@@ -92,7 +92,7 @@ function initParticleNet() {
       }
     }
     for (const p of parts) {
-      ctx.fillStyle = "rgba(200,240,74,.6)";
+      ctx.fillStyle = "rgba(37,99,235,.55)";
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
       ctx.fill();
@@ -517,6 +517,11 @@ async function loadTaskDetail(id) {
           <div class="stat"><div class="num" id="st-part">${task.participant_count}</div><div class="lbl">参与人数</div></div>
           <div class="stat"><div class="num" id="st-eps">${task.dp_epsilon ?? "无"}</div><div class="lbl">DP ε</div></div>
         </div>
+        ${App.user && (App.user.role === "admin" || task.creator === App.user.username) ? `
+        <div style="margin:14px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <button onclick="doStartTask(${task.id})">开始训练</button>
+          <span style="color:var(--muted);font-size:12.5px;">启动联邦训练，需所有参与方已加入并在线</span>
+        </div>` : ""}
         ${App.mode === "client" ? `
         <div style="margin:14px 0;">
           <button onclick="doTrainRc(${task.id})">训练残差修正器（二阶段）</button>
@@ -636,6 +641,15 @@ async function doTrainRc(taskId) {
       ? `RC 完成：WAPE ${d.wape_global}% → ${d.wape_rc}%`
       : "RC 已提交，结果已上传到服务端";
     showToast(hint);
+    loadTaskDetail(taskId);
+  } catch (e) { showToast(e.message, true); }
+}
+
+// ===== Server 端开始训练（创建者/管理员触发）=====
+async function doStartTask(taskId) {
+  try {
+    const r = await api(`/api/tasks/${taskId}/start`, { method: "POST" });
+    showToast(r.message || "训练已开始");
     loadTaskDetail(taskId);
   } catch (e) { showToast(e.message, true); }
 }

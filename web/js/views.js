@@ -4,34 +4,81 @@ function renderLogin() {
   document.getElementById("topbar").classList.add("hidden");
   document.getElementById("view").innerHTML = `
     <div class="login-page">
+      <canvas id="bg-canvas" class="bg-canvas" aria-hidden="true"></canvas>
       <canvas id="net-canvas" class="net-canvas" aria-hidden="true"></canvas>
-      <div class="energy-ring" aria-hidden="true"></div>
-      <div class="auth-card anim-in">
-        <div class="card-status">
-          <span class="status-dot"></span>
-          <span class="status-tag">FL-NET · NODE</span>
+      <div class="login-layout">
+        <div class="login-hero anim-in">
+          <div class="brand-line">
+            <span class="brand-en">NEXUSGRID</span>
+            <span class="brand-cn">云枢启电</span>
+          </div>
+          <h1 class="hero-title">数据留在本地，<br>智能协同生长。</h1>
+          <p class="hero-desc">联邦学习 · 差分隐私 · 电力负荷预测<br>隐私不出的多机协同训练平台</p>
+          <div class="hero-foot">
+            <span class="hero-dot" aria-hidden="true"></span>
+            <span id="ns-text">FL-NET v2.13 · 联邦节点 04 · ε 审计开启</span>
+          </div>
         </div>
-        <div class="auth-logo">
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle cx="7" cy="12" r="2.4" stroke="#ffffff" stroke-width="2"/>
-            <circle cx="17" cy="7" r="2.4" stroke="#ffffff" stroke-width="2"/>
-            <circle cx="17" cy="17" r="2.4" stroke="#ffffff" stroke-width="2"/>
-            <path d="M9.2 11.2l5.6-3M9.2 12.8l5.6 3.2" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
-          </svg>
+        <div class="auth-card anim-in anim-d1">
+          <div class="auth-head">
+            <span class="status-dot" aria-hidden="true"></span>
+            <h2 class="auth-title">登录</h2>
+            <p class="auth-sub">进入联邦学习平台</p>
+          </div>
+          <div class="form-row"><label for="login-user">用户名</label><input id="login-user" autocomplete="username" placeholder="请输入用户名"></div>
+          <div class="form-row"><label for="login-pass">密码</label><input id="login-pass" type="password" autocomplete="current-password" placeholder="请输入密码"></div>
+          <button class="btn-block" onclick="doLogin()">登 录</button>
+          <button class="secondary btn-block" onclick="doRegister()">注册新账号</button>
         </div>
-        <h1 class="auth-title">联邦学习平台</h1>
-        <p class="auth-sub">Federated Learning · Power Grid</p>
-        <div class="form-row"><label for="login-user">用户名</label><input id="login-user" autocomplete="username" placeholder="请输入用户名"></div>
-        <div class="form-row"><label for="login-pass">密码</label><input id="login-pass" type="password" autocomplete="current-password" placeholder="请输入密码"></div>
-        <button class="btn-block" onclick="doLogin()">登 录</button>
-        <button class="secondary btn-block" onclick="doRegister()">注册新账号</button>
-      </div>
-      <div class="net-status" aria-hidden="true">
-        <span class="ns-dot"></span>
-        <span id="ns-text">FL-NET v2.13 · 联邦节点 04 · ε 审计开启</span>
       </div>
     </div>`;
   initParticleNet();
+  initBgFlow();
+}
+
+// ===== 月之暗面式流动光斑背景（Canvas 绘制，随时间漂移+呼吸） =====
+let _bgFlowHandle = null;
+function initBgFlow() {
+  const canvas = document.getElementById("bg-canvas");
+  if (!canvas) return;
+  if (_bgFlowHandle) { cancelAnimationFrame(_bgFlowHandle); _bgFlowHandle = null; }
+  const ctx = canvas.getContext("2d");
+  let w, h;
+  const blobs = [
+    { bx: .12, by: .16, r: .50, c: [20, 184, 166], s: .50, p: 0, ph: 0 },
+    { bx: .85, by: .12, r: .55, c: [59, 130, 246], s: .40, p: 1.3, ph: 2 },
+    { bx: .50, by: .90, r: .60, c: [167, 139, 250], s: .60, p: 2.6, ph: 4 },
+    { bx: .92, by: .70, r: .40, c: [217, 119, 6], s: .35, p: 3.9, ph: 1 },
+    { bx: .28, by: .78, r: .34, c: [20, 184, 166], s: .70, p: 5, ph: 3 },
+    { bx: .72, by: .50, r: .44, c: [59, 130, 246], s: .55, p: 6, ph: 5 },
+  ];
+  function resize() {
+    w = canvas.width = canvas.clientWidth;
+    h = canvas.height = canvas.clientHeight;
+  }
+  resize();
+  window.addEventListener("resize", resize);
+  const t0 = performance.now();
+  function tick(now) {
+    const t = (now - t0) / 1000;
+    ctx.clearRect(0, 0, w, h);
+    ctx.globalCompositeOperation = "lighter";
+    for (const b of blobs) {
+      // 双正弦组合轨迹 → 像光影缓慢流动
+      const x = (b.bx + Math.sin(t * b.s + b.p) * .09 + Math.sin(t * b.s * .6 + b.ph) * .04) * w;
+      const y = (b.by + Math.cos(t * b.s * .8 + b.p) * .09 + Math.cos(t * b.s * .5 + b.ph) * .04) * h;
+      const r = b.r * Math.min(w, h) * (1 + Math.sin(t * .35 + b.ph) * .15);
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, `rgba(${b.c[0]},${b.c[1]},${b.c[2]},.32)`);
+      g.addColorStop(.55, `rgba(${b.c[0]},${b.c[1]},${b.c[2]},.10)`);
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+    ctx.globalCompositeOperation = "source-over";
+    _bgFlowHandle = requestAnimationFrame(tick);
+  }
+  _bgFlowHandle = requestAnimationFrame(tick);
 }
 
 // ===== 登录页粒子网络动画 =====
@@ -82,7 +129,7 @@ function initParticleNet() {
         const d2 = dx * dx + dy * dy;
         if (d2 < LINK2) {
           const alpha = (1 - Math.sqrt(d2) / LINK) * .2;
-          ctx.strokeStyle = "rgba(37,99,235," + alpha.toFixed(3) + ")";
+          ctx.strokeStyle = "rgba(20,184,166," + alpha.toFixed(3) + ")";
           ctx.lineWidth = 1;
           ctx.beginPath();
           ctx.moveTo(a.x, a.y);
@@ -92,7 +139,7 @@ function initParticleNet() {
       }
     }
     for (const p of parts) {
-      ctx.fillStyle = "rgba(37,99,235,.55)";
+      ctx.fillStyle = "rgba(20,184,166,.55)";
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
       ctx.fill();
@@ -106,6 +153,7 @@ function initParticleNet() {
 function stopParticleNet() {
   if (_netHandle) { cancelAnimationFrame(_netHandle); _netHandle = null; }
   if (_netResize) { window.removeEventListener("resize", _netResize); _netResize = null; }
+  if (_bgFlowHandle) { cancelAnimationFrame(_bgFlowHandle); _bgFlowHandle = null; }
 }
 
 async function doLogin() {

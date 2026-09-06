@@ -64,8 +64,10 @@ def _forward(method: str, url: str, headers: dict, body: bytes | None) -> object
     这样调用方（local_login / forward）能按状态码正确处理而不是误判为断网。
     """
     req = urllib.request.Request(url, data=body, method=method, headers=headers)
+    # 强制直连不走系统代理：server 走 Tailscale/内网地址，Clash 系统代理会劫持导致连不上
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        resp = urllib.request.urlopen(req, timeout=10)
+        resp = opener.open(req, timeout=30)
         raw = resp.read()
         status = resp.status
         resp_headers = dict(resp.headers)
@@ -266,6 +268,63 @@ def create_app(web_dir: str | None = None,
         return {"ok": ok, "wape_global": wg, "wape_rc": wr,
                 "png": str(png) if png else None}
 
+    # ===== need.md 阶段2/3：本地二阶段 + 预测展示 =====
+    @app.get("/local/stage-status")
+    def local_stage_status(task_id: int):
+        from app.client_stage import get_status
+        try:
+            return get_status(task_id)
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"detail": str(e)})
+
+    @app.post("/local/stage2")
+    def local_stage2(body: RcBody):
+        from app.client_stage import run_stage2
+        import threading
+        t = token["value"]
+        if not t:
+            return JSONResponse(status_code=401, content={"detail": "未登录"})
+
+        def _work():
+            try:
+                run_stage2(cfg["server_url"], t, body.task_id,
+                           cfg.get("client_id", ""),
+                           rc_type=cfg.get("rc_type", "tcn"),
+                           data_dir=str(DATA_DIR))
+            except Exception:
+                pass  # 状态已写入 failed
+        threading.Thread(target=_work, daemon=True).start()
+        return {"ok": True, "message": "二阶段已开始（本地训练中）"}
+
+    @app.post("/local/stage3")
+    def local_stage3(body: RcBody):
+        from app.client_stage import run_stage3
+        import threading
+        t = token["value"]
+        if not t:
+            return JSONResponse(status_code=401, content={"detail": "未登录"})
+
+        def _work():
+            try:
+                run_stage3(cfg["server_url"], t, body.task_id,
+                           cfg.get("client_id", ""),
+                           rc_type=cfg.get("rc_type", "tcn"),
+                           data_dir=str(DATA_DIR))
+            except Exception:
+                pass
+        threading.Thread(target=_work, daemon=True).start()
+        return {"ok": True, "message": "本地预测生成中"}
+
+    @app.get("/local/stage3-data")
+    def local_stage3_data(task_id: int):
+        from app.client_stage import get_stage3_data
+        try:
+            return get_stage3_data(task_id)
+        except FileNotFoundError as e:
+            return JSONResponse(status_code=404, content={"detail": str(e)})
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"detail": str(e)})
+
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
     async def forward(path: str, request: Request):
         method = request.method
@@ -279,6 +338,9 @@ def create_app(web_dir: str | None = None,
         t = token["value"]
         if auth:
             headers["Authorization"] = auth
+            # 缓存一份，供本地 stage2/3 下载全局模型等使用（未走 /local/login 时）
+            if not t:
+                token["value"] = auth[7:] if auth.lower().startswith("bearer ") else auth
         elif t:
             headers["Authorization"] = "Bearer " + t
         url = cfg["server_url"] + "/api/" + path
@@ -290,8 +352,16 @@ def create_app(web_dir: str | None = None,
         if "image" in resp.headers.get("content-type", ""):
             return Response(content=resp.content,
                             media_type=resp.headers["content-type"])
+        try:
+            payload = resp.json()
+        except Exception:
+            # server 返回非 JSON（如 500 纯文本）时原样透传，避免 agent 崩溃
+            return Response(
+                content=resp.content,
+                media_type=resp.headers.get("content-type", "text/plain"),
+                status_code=resp.status_code)
         return JSONResponse(status_code=resp.status_code,
-                            content=resp.json())
+                            content=payload)
 
     app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
     return app

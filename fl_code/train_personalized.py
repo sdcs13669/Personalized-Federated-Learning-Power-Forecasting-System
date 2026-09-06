@@ -503,6 +503,7 @@ def main(args: argparse.Namespace):
         for epoch in range(args.epochs):
             loss = _train_corrector_epoch(corrector, loader, optimizer, device)
             epoch_losses.append(round(loss, 6))
+            print(f"EPOCHLOSS {epoch + 1} {loss:.6f}")
             # keep only the best model (lowest pinball loss)
             if loss < best_loss:
                 best_loss = loss

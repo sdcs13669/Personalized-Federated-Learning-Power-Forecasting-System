@@ -541,9 +541,17 @@ function renderTaskDetail(id) {
   document.getElementById("view").innerHTML = `
     <button class="secondary" style="margin-bottom:12px;" onclick="location.hash='#/plaza'">返回</button>
     <div id="detail-body">加载中...</div>`;
-  loadTaskDetail(id);
   clearInterval(App.polling);
-  App.polling = setInterval(() => loadTaskDetail(id), 2500);
+  if (App.mode === "client") {
+    // ===== 客户端三阶段页（need.md）：训练过程 → 二阶段 → 预测展示 =====
+    loadClientTaskDetail(id);
+    // 训练中每 3s 刷新阶段1；二阶段/预测阶段由按钮/状态切换，不轮询
+    App.polling = setInterval(() => loadClientTaskDetail(id, true), 3000);
+  } else {
+    // ===== 管理端大屏（6 图）=====
+    loadTaskDetail(id);
+    App.polling = setInterval(() => loadTaskDetail(id), 2500);
+  }
 }
 
 async function loadTaskDetail(id) {
@@ -700,4 +708,332 @@ async function doStartTask(taskId) {
     showToast(r.message || "训练已开始");
     loadTaskDetail(taskId);
   } catch (e) { showToast(e.message, true); }
+}
+
+// =====================================================================
+// 客户端三阶段页（need.md）
+// 阶段1 训练过程：只看自身 ε 累计 + 本地 TCN loss
+// 阶段2 二阶段：一阶段完成后出现"开启二阶段"，纯本地训练，展示本地修正器 loss
+// 阶段3 预测展示：本地测试集预测，动态图 + 静态图 + 文本
+// =====================================================================
+const _clientPhase = { stage2: "idle", stage3: "idle" }; // 本客户端对当前任务的本地阶段
+
+async function loadClientTaskDetail(id, isRefresh) {
+  // 1) 探测本客户端身份 client_id
+  let myCid = "";
+  try { const s = await (await fetch("/local/status")).json(); myCid = s.client_id || ""; }
+  catch (e) {}
+  // 2) 拉任务与审计
+  try {
+    const task = await api(`/api/tasks/${id}`);
+    const audit = await api(`/api/tasks/${id}/audit`).catch(() => []);
+    // 3) 拉 agent 本地阶段状态（stage2 是否已开启、stage3 预测数据是否就绪）
+    let st = {};
+    try { st = await (await fetch("/local/stage-status?task_id=" + id)).json(); }
+    catch (e) { st = {}; }
+    const s2 = st.stage2 || "idle";   // idle | running | done
+    const s3 = st.stage3 || "idle";   // idle | ready
+    const body = document.getElementById("detail-body");
+    if (!body) return;
+    const built = body.getAttribute("data-built") === "1";
+    if (!built) body.setAttribute("data-built", "1");
+    renderClientTask(body, built, { task, audit, myCid, s2, s3, st });
+  } catch (e) {
+    const body = document.getElementById("detail-body");
+    if (body) body.innerHTML = `<div class="card" style="color:var(--danger);">加载失败：${e.message}</div>`;
+  }
+}
+
+function renderClientTask(body, built, ctx) {
+  const { task, audit, myCid, s2, s3 } = ctx;
+  const rounds = audit.map(a => a.round);
+  // 自己的 ε 累计 + 本地 loss
+  const cumEps = [], myLoss = [];
+  let acc = 0;
+  for (const a of audit) {
+    const e = (a.client_epsilons && a.client_epsilons[myCid]) || 0;
+    acc += e;
+    cumEps.push(Number(acc.toFixed(4)));
+    const l = a.client_losses && a.client_losses[myCid];
+    myLoss.push(l === undefined || l === null ? null : Number(l.toFixed(6)));
+  }
+  // 一阶段是否结束（进入 recruiting/training 之外的终态即认为一阶段结束）
+  const phase1Done = (task.status === "completed" || task.status === "cancelled");
+
+  if (!built) {
+    body.innerHTML = `
+      <div class="stat-cards">
+        <div class="stat"><div class="num" id="ct-status">${task.status}</div><div class="lbl">状态</div></div>
+        <div class="stat"><div class="num" id="ct-round">${task.current_round || 0}/${task.rounds}</div><div class="lbl">轮次</div></div>
+        <div class="stat"><div class="num" id="ct-cid" style="font-size:16px;">${myCid || "未知"}</div><div class="lbl">本客户端</div></div>
+        <div class="stat"><div class="num" id="ct-phase" style="font-size:18px;">阶段1</div><div class="lbl">当前阶段</div></div>
+      </div>
+      <div class="grid2">
+        <div class="card"><h4>我的隐私预算 ε 累计</h4><p class="page-sub" style="margin-bottom:8px;">仅本客户端 ${myCid || ""}</p><div id="ch-self-eps" class="chart"></div></div>
+        <div class="card"><h4>本地 TCN 模型 loss</h4><p class="page-sub" style="margin-bottom:8px;">仅本客户端 ${myCid || ""}</p><div id="ch-self-loss" class="chart"></div></div>
+      </div>
+      <div id="ct-stage2"></div>
+      <div id="ct-stage3"></div>`;
+  } else {
+    const set = (n, v) => { const el = document.getElementById(n); if (el) el.textContent = v; };
+    set("ct-status", task.status);
+    set("ct-round", `${task.current_round || 0}/${task.rounds}`);
+    set("ct-phase", phase1Done ? "阶段1完成" : "阶段1·训练中");
+  }
+  // 阶段1 两条曲线
+  setChart("ch-self-eps", {
+    xAxis: { type: "category", data: rounds.length ? rounds : [0] },
+    yAxis: { type: "value", name: "累计 ε" },
+    series: [{ type: "line", data: rounds.length ? cumEps : [],
+               name: myCid, areaStyle: {}, smooth: true }],
+  });
+  setChart("ch-self-loss", {
+    xAxis: { type: "category", data: rounds.length ? rounds : [0] },
+    yAxis: { type: "value", name: "loss" },
+    series: [{ type: "line", data: rounds.length ? myLoss : [],
+               name: "本地 loss", areaStyle: {}, smooth: true, connectNulls: true }],
+  });
+  // 阶段2 / 阶段3 容器由下述函数根据本地状态填充
+  renderStage2Area(body, ctx);
+  renderStage3Area(body, ctx);
+}
+
+function renderStage2Area(body, ctx) {
+  const el = document.getElementById("ct-stage2");
+  if (!el) return;
+  const { task, s2, s3, st } = ctx;
+  const done1 = (task.status === "completed" || task.status === "cancelled");
+  if (!done1) { el.innerHTML = ""; el.dataset.key = ""; return; }
+  if (s2 === "running") {
+    const key = "running";
+    if (el.dataset.key !== key) {
+      el.dataset.key = key;
+      el.innerHTML = `<div class="card"><h4>二阶段 · 本地个性化修正器训练中…</h4>
+        <p class="page-sub" style="margin-top:6px;">纯本地训练（不上传服务器），完成后自动刷新。</p></div>`;
+    }
+    return;
+  }
+  if (s2 === "failed") {
+    const key = "failed";
+    if (el.dataset.key !== key) {
+      el.dataset.key = key;
+      el.innerHTML = `<div class="card"><h4 style="color:var(--danger);">二阶段失败</h4>
+        <p class="page-sub">${(st && st.error) || "未知错误，查看 agent 窗口日志"}</p>
+        <button style="margin-top:10px;" onclick="startStage2(${task.id})">重试</button></div>`;
+    }
+    return;
+  }
+  if (s2 === "done") {
+    const arch = (st && st.corrector_arch) || "";
+    const key = "done";
+    if (el.dataset.key !== key) {
+      el.dataset.key = key;
+      el.innerHTML = `<div class="card"><h4>二阶段 · 本地个性化修正器${arch ? "（" + arch + "）" : ""}</h4>
+        <div id="ch-rc-loss" class="chart" style="height:240px;"></div></div>`;
+    }
+    const losses = (st && st.stage2_epoch_losses) || [];
+    if (document.getElementById("ch-rc-loss")) {
+      setChart("ch-rc-loss", {
+        xAxis: { type: "category", data: losses.map((_, i) => i + 1) },
+        yAxis: { type: "value", name: "pinball loss" },
+        series: [{ type: "line", data: losses, name: "本地修正器 loss",
+                   smooth: true, areaStyle: {} }],
+      });
+    }
+    return;
+  }
+  // idle：一阶段完成但二阶段未开启
+  const key = "idle";
+  if (el.dataset.key !== key) {
+    el.dataset.key = key;
+    el.innerHTML = `<div class="card">
+      <h4>二阶段 · 本地个性化修正器</h4>
+      <p class="page-sub" style="margin:6px 0 12px;">一阶段训练已结束。二阶段在本地训练残差修正器（纯本地，不上传服务器），完成后可查看本地 loss 与预测。</p>
+      <button onclick="startStage2(${task.id})">开启二阶段</button>
+    </div>`;
+  }
+}
+
+function renderStage3Area(body, ctx) {
+  const el = document.getElementById("ct-stage3");
+  if (!el) return;
+  const { task, s2, s3 } = ctx;
+  const done1 = (task.status === "completed" || task.status === "cancelled");
+  if (!done1 || s2 !== "done") { el.innerHTML = ""; el.dataset.key = ""; return; }
+  if (s3 === "running") {
+    const key = "running";
+    if (el.dataset.key !== key) {
+      el.dataset.key = key;
+      el.innerHTML = `<div class="card"><h4>预测展示</h4>
+        <p class="page-sub" style="margin-top:6px;">正在用本地测试集生成预测…</p></div>`;
+    }
+    return;
+  }
+  if (s3 === "ready") {
+    const key = "ready";
+    if (el.dataset.key !== key) {
+      el.dataset.key = key;
+      el.innerHTML = `<div class="card"><h4>预测展示</h4><div id="ct-predict">加载预测数据…</div></div>`;
+    }
+    if (el.dataset.loaded !== "1") {
+      el.dataset.loaded = "1";
+      loadStage3Data(ctx);
+    }
+    return;
+  }
+  // idle：二阶段完成但预测未生成 → 提供按钮
+  const key = "idle";
+  if (el.dataset.key !== key) {
+    el.dataset.key = key;
+    el.dataset.loaded = "0";
+    el.innerHTML = `<div class="card">
+      <h4>预测展示</h4>
+      <p class="page-sub" style="margin:6px 0 12px;">本地用测试集跑预测并生成图表：真实 / 全局TCN / 全局+RC P50 / 预测区间，以及 WAPE、PINAW、区间覆盖率。</p>
+      <button onclick="startStage3(${task.id})">生成本地预测</button>
+    </div>`;
+  }
+}
+
+// ===== 二阶段：开启（触发 agent 本地训练 RC，返回后轮询阶段状态）=====
+async function startStage2(taskId) {
+  try {
+    const r = await fetch("/local/stage2", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_id: taskId }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || "二阶段启动失败");
+    showToast("二阶段已在本地开始训练");
+    // 触发后立刻重建（显示训练中），随轮询更新 loss
+    loadClientTaskDetail(taskId);
+  } catch (e) { showToast(e.message, true); }
+}
+
+// ===== 阶段3：触发本地预测生成 =====
+async function startStage3(taskId) {
+  try {
+    const r = await fetch("/local/stage3", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_id: taskId }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || "预测启动失败");
+    showToast("本地预测生成中…");
+    loadClientTaskDetail(taskId);
+  } catch (e) { showToast(e.message, true); }
+}
+
+// ===== 阶段3：加载本地预测结果 =====
+async function loadStage3Data(ctx) {
+  const el = document.getElementById("ct-predict");
+  if (!el) return;
+  try {
+    const taskId = ctx.task.id;
+    const r = await fetch("/local/stage3-data?task_id=" + taskId);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || "预测数据获取失败");
+    renderStage3Charts(d, taskId);
+  } catch (e) {
+    el.innerHTML = `<span style="color:var(--danger);">预测数据加载失败：${e.message}</span>`;
+  }
+}
+
+function renderStage3Charts(d, taskId) {
+  const el = document.getElementById("ct-predict");
+  if (!el) return;
+  // d: { arch, wape_global, wape_rc, wape_drop_pct, pinaw, coverage,
+  //      series:{ real:[], global:[], rc:[], upper:[], lower:[] }, lastWindow:{...} }
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:12px;">
+      <h4>性能对比</h4>
+      <p class="page-sub" style="margin:6px 0;">修正器架构：${d.arch || "未知"}</p>
+      <p class="page-sub">WAPE：全局TCN <b>${fmtNum(d.wape_global)}%</b> → 全局+RC <b>${fmtNum(d.wape_rc)}%</b>（<b style="color:var(--ok);">↓ ${fmtNum(d.wape_drop_pct)}%</b>）· PINAW ${fmtNum(d.pinaw)} · 区间覆盖率 ${fmtNum(d.coverage)}%</p>
+    </div>
+    <div class="grid2">
+      <div class="card"><h4>WAPE 对比</h4><div id="ch-wape" style="height:240px;"></div></div>
+      <div class="card"><h4>区间覆盖率</h4><div id="ch-coverage" style="height:240px;"></div></div>
+    </div>
+    <div class="card">
+      <h4>预测动态演示（真实 / 全局TCN / 全局+RC P50 ± 区间）</h4>
+      <div style="margin:8px 0;">
+        <button onclick="window._fc && window._fc.play()">播放</button>
+        <button class="secondary" onclick="window._fc && window._fc.pause()">暂停</button>
+        <button class="secondary" onclick="window._fc && window._fc.reset()">重置</button>
+      </div>
+      <div id="ch-forecast" style="height:300px;"></div>
+    </div>`;
+  // 静态图1：柱状 = 全局TCN WAPE / 全局+RC WAPE / PINAW（need.md b）
+  setChart("ch-wape", {
+    legend: { top: 0 },
+    xAxis: { type: "category", data: ["全局TCN WAPE", "全局+RC WAPE", "PINAW"] },
+    yAxis: [
+      { type: "value", name: "WAPE %" },
+      { type: "value", name: "区间宽", splitLine: { show: false } },
+    ],
+    series: [
+      { type: "bar", name: "WAPE", yAxisIndex: 0,
+        data: [d.wape_global, d.wape_rc, null],
+        itemStyle: { color: p => p.dataIndex === 1 ? "#0d9488" : "#64748b" } },
+      { type: "bar", name: "PINAW", yAxisIndex: 1,
+        data: [null, null, fmtNum(d.pinaw)],
+        itemStyle: { color: "#d97706" } },
+    ],
+  });
+  // 静态图2：饼图覆盖率（覆盖率 vs 未覆盖）
+  setChart("ch-coverage", {
+    series: [{ type: "pie", radius: ["42%", "68%"],
+               data: [
+                 { value: d.coverage, name: "区间覆盖率", itemStyle: { color: "#0d9488" } },
+                 { value: Math.max(0, 100 - d.coverage), name: "未覆盖", itemStyle: { color: "#e2e8f0" } },
+               ] }],
+  });
+  setupForecastPlayer("ch-forecast", d.series || null);
+}
+
+function fmtNum(v) {
+  if (v === null || v === undefined || isNaN(v)) return "-";
+  return (Math.round(v * 100) / 100);
+}
+
+// ===== 动态预测播放器 =====
+function setupForecastPlayer(chartId, series) {
+  const el = document.getElementById(chartId);
+  if (!el) return;
+  let chart = charts[chartId];
+  if (!chart || chart.getDom() !== el) {
+    if (chart) chart.dispose();
+    chart = echarts.init(el);
+    charts[chartId] = chart;
+  }
+  if (!series || !series.real || !series.real.length) {
+    chart.setOption({ title: { text: "暂无预测数据", left: "center", top: "middle" } });
+    return;
+  }
+  const n = series.real.length;
+  let idx = 0, timer = null;
+  function draw() {
+    const upto = Math.min(idx + 1, n);
+    const x = Array.from({ length: upto }, (_, i) => i);
+    const sl = (arr) => arr.slice(0, upto);
+    chart.setOption({
+      xAxis: { type: "category", data: x },
+      yAxis: { type: "value", scale: true },
+      legend: { top: 0 },
+      series: [
+        { type: "line", data: sl(series.real), name: "真实", smooth: true },
+        { type: "line", data: sl(series.global), name: "全局TCN预测", smooth: true },
+        { type: "line", data: sl(series.rc), name: "全局+RC P50", smooth: true },
+        { type: "line", data: sl(series.upper), name: "区间上界", smooth: true, lineStyle: { opacity: .3 } },
+        { type: "line", data: sl(series.lower), name: "区间下界", smooth: true, lineStyle: { opacity: .3 } },
+      ],
+    }, true);
+  }
+  const play = () => {
+    if (timer) return;
+    timer = setInterval(() => { idx++; if (idx >= n) { idx = n - 1; pause(); } draw(); }, 200);
+  };
+  const pause = () => { if (timer) { clearInterval(timer); timer = null; } };
+  const reset = () => { pause(); idx = 0; draw(); };
+  window._fc = { play, pause, reset };
+  draw();
 }

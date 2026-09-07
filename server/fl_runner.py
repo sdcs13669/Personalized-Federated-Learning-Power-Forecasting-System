@@ -53,6 +53,42 @@ def get_task_status(task_id: int) -> str | None:
     return "completed" if active.proc.returncode == 0 else "failed"
 
 
+def stop_training(task_id: int) -> str:
+    """Force-stop the flwr worker subprocess for a task.
+
+    Returns one of:
+      "no_active"       — no tracked subprocess for this task (nothing to kill)
+      "killed"          — process was running and has been terminated
+      "already_exited"  — process was tracked but had already exited
+
+    Note: killing the worker means its final DB write (training → completed /
+    failed) never runs, so the caller must reset the task status itself.
+    """
+    active = _active_tasks.get(task_id)
+    if active is None or active.proc is None:
+        return "no_active"
+
+    proc = active.proc
+    if proc.poll() is None:
+        # 先 SIGTERM 给优雅退出机会，5 秒不退再 SIGKILL
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        _active_tasks.pop(task_id, None)
+        logger.info("Force-stopped flwr worker subprocess for task %d",
+                    task_id)
+        return "killed"
+
+    # 进程早已退出，仅清理内存句柄（防残留卡 training）
+    _active_tasks.pop(task_id, None)
+    logger.info("Task %d worker already exited (rc=%s); entry cleaned",
+                task_id, proc.returncode)
+    return "already_exited"
+
+
 def start_training(task_dict: dict, participants: list[dict],
                    db_session_factory) -> None:
     """Start flwr server in a separate subprocess. Non-blocking."""

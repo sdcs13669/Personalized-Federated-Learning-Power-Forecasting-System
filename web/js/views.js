@@ -319,6 +319,8 @@ function statusBadge(s) {
     training: ["训练中", "badge-teal"],
     completed: ["已完成", "badge-green"],
     cancelled: ["已取消", "badge-gray"],
+    stopped: ["已停止", "badge-gray"],
+    failed: ["失败", "badge-red"],
   };
   const [label, cls] = map[s] || [s, "badge-gray"];
   return `<span class="badge ${cls}">${label}</span>`;
@@ -574,10 +576,7 @@ async function loadTaskDetail(id) {
           <div class="stat"><div class="num" id="st-eps">${task.dp_epsilon ?? "无"}</div><div class="lbl">DP ε</div></div>
         </div>
         ${App.user && (App.user.role === "admin" || task.creator === App.user.username) ? `
-        <div style="margin:14px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-          <button onclick="doStartTask(${task.id})">开始训练</button>
-          <span style="color:var(--muted);font-size:12.5px;">启动联邦训练，需所有参与方已加入并在线</span>
-        </div>` : ""}
+        <div style="margin:14px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;" id="task-actions"></div>` : ""}
         ${App.mode === "client" ? `
         <div style="margin:14px 0;">
           <button onclick="doTrainRc(${task.id})">训练残差修正器（二阶段）</button>
@@ -598,6 +597,7 @@ async function loadTaskDetail(id) {
       set("st-part", task.participant_count);
       set("st-eps", task.dp_epsilon ?? "无");
     }
+    renderTaskActions(task);
     renderCharts(audit, rc);
   } catch (e) { showToast(e.message, true); }
 }
@@ -708,6 +708,36 @@ async function doStartTask(taskId) {
     showToast(r.message || "训练已开始");
     loadTaskDetail(taskId);
   } catch (e) { showToast(e.message, true); }
+}
+
+// ===== Server 端强制停止训练（创建者/管理员触发）=====
+async function doStopTask(taskId) {
+  if (!confirm("确定强制停止该任务的训练？\n\n" +
+               "· 当前轮次进度会丢失\n" +
+               "· worker 进程将被终止，8089 端口释放\n" +
+               "· 任务状态将变为「已停止」")) return;
+  try {
+    const r = await api(`/api/tasks/${taskId}/stop`, { method: "POST" });
+    showToast(r.message || "训练已停止");
+    loadTaskDetail(taskId);
+  } catch (e) { showToast(e.message, true); }
+}
+
+// 按任务最新状态渲染操作按钮（每次轮询调用，状态变化自动切换）
+function renderTaskActions(task) {
+  const box = document.getElementById("task-actions");
+  if (!box) return; // 非创建者/管理员，无操作区
+  if (task.status === "recruiting") {
+    box.innerHTML = `
+      <button onclick="doStartTask(${task.id})">开始训练</button>
+      <span style="color:var(--muted);font-size:12.5px;">启动联邦训练，需所有参与方已加入并在线</span>`;
+  } else if (task.status === "training") {
+    box.innerHTML = `
+      <button class="danger" onclick="doStopTask(${task.id})">强制停止训练</button>
+      <span style="color:var(--danger);font-size:12.5px;">终止当前训练进程并释放 8089 端口，任务状态将变为「已停止」</span>`;
+  } else {
+    box.innerHTML = ""; // 终态任务不显示操作按钮
+  }
 }
 
 // =====================================================================

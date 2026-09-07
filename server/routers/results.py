@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session
 from server.database import get_db, SessionLocal
 from server.models import Task, AuditRound, Participant, RcResult, User
 from server.routers.auth import get_current_user_from_header
-from server.fl_runner import start_training, get_final_model
+from server.fl_runner import start_training, stop_training, get_final_model
 
 router = APIRouter(prefix="/api/tasks", tags=["results"])
 
@@ -67,6 +68,45 @@ def start_task(
 
     start_training(task_dict, participant_list, SessionLocal)
     return {"status": "training", "message": "Training started"}
+
+
+@router.post("/{task_id}/stop")
+def stop_task(
+    task_id: int,
+    user: User = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """强制停止正在训练的任务：杀 worker 子进程 + 复位 DB 状态。
+
+    worker 被 kill 后不会再写数据库（training → completed/failed 那步不会
+    执行），所以这里兜底把状态复位为 stopped，避免任务永久卡在 training。
+    """
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.creator_id != user.id and user.role != "admin":
+        raise HTTPException(status_code=403,
+                            detail="Only the creator or admin can stop")
+
+    kill_result = stop_training(task_id)
+
+    changed = False
+    if task.status == "training":
+        task.status = "stopped"
+        task.finished_at = datetime.utcnow()
+        db.commit()
+        db.refresh(task)
+        changed = True
+
+    msg = {
+        "no_active": "当前没有正在运行的训练进程（可能已结束或被清理）",
+        "killed": "训练进程已强制停止",
+        "already_exited": "训练进程此前已自行退出，仅清理了残留状态",
+    }[kill_result]
+    if changed:
+        msg += "，任务状态已复位为 stopped"
+    return {"status": task.status, "message": msg,
+            "killed": kill_result == "killed"}
 
 
 @router.get("/{task_id}/audit")

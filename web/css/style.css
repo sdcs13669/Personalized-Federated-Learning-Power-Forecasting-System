@@ -191,6 +191,7 @@ tbody tr:last-child td { border-bottom: none; }
 .badge-teal { color: var(--accent); background: var(--accent-soft); border-color: var(--line-accent); }
 .badge-green { color: var(--ok); background: rgba(22, 163, 74, .10); border-color: rgba(22, 163, 74, .25); }
 .badge-gray { color: var(--muted); background: var(--surface-2); border-color: var(--line-strong); }
+.badge-red { color: var(--danger); background: rgba(220, 38, 38, .10); border-color: rgba(220, 38, 38, .25); }
 
 /* ===== 按钮（荧光绿实心，深墨文字） ===== */
 button {

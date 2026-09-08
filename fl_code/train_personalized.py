@@ -312,6 +312,8 @@ def _load_client_data_cached(client_id: str, stride: int,
         # 复刻 load_client_data 的列选择 + one-hot 展开逻辑
         keep = ["datetime"] + seqs + \
             [c for c in public_cols + local_cols if c in df.columns]
+        if "category_id" in df.columns:
+            keep.append("category_id")  # 保留以展开 cat_residential/...，否则 public 列 KeyError
         df = df[keep]
         if "category_id" in df.columns:
             cat = df["category_id"].astype(int)

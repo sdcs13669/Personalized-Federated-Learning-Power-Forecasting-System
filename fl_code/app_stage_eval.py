@@ -39,6 +39,8 @@ def _load_data(data_dir: str, client_id: str) -> dict:
     local_cols = list(config[dataset_id].get("local_features", []))
     keep = ["datetime"] + seqs + \
         [c for c in public_cols + local_cols if c in df.columns]
+    if "category_id" in df.columns:
+        keep.append("category_id")  # 保留以展开 cat_residential/...，否则 public 列 KeyError
     df = df[keep]
     if "category_id" in df.columns:
         cat = df["category_id"].astype(int)
@@ -46,9 +48,11 @@ def _load_data(data_dir: str, client_id: str) -> dict:
         df["cat_transformer"] = (cat == 1).astype(float)
         df["cat_industrial"] = (cat == 2).astype(float)
         df = df.drop(columns=["category_id"])
-    df_norm, _ = preprocess(df, seqs, local_cols)
-    return {"df_norm": df_norm, "seqs": seqs,
-            "public_cols": public_cols, "local_cols": local_cols}
+    df_raw = df.copy()
+    df_norm, params = preprocess(df, seqs, local_cols)
+    return {"df_raw": df_raw, "df_norm": df_norm, "seqs": seqs,
+            "public_cols": public_cols, "local_cols": local_cols,
+            "params": params}
 
 
 @torch.no_grad()
@@ -77,6 +81,8 @@ def main() -> None:
     # 2) 数据
     data = _load_data(args.data_dir, args.cid)
     df_norm = data["df_norm"]
+    df_raw = data["df_raw"]
+    params = data["params"]
     seqs = data["seqs"]
     public_cols = data["public_cols"]
     local_cols = data["local_cols"]
@@ -100,7 +106,15 @@ def main() -> None:
     best_seq = None   # 记录最后一个有效序列，用于"预测未来"
 
     for s in seqs:
-        load = df_norm[s].values.astype(np.float32)
+        load = df_norm[s].values.astype(np.float32)      # 归一化负荷（模型输入）
+        load_raw = df_raw[s].values.astype(np.float32)   # 原始负荷（真实功率）
+        p = params.get(s) or {"log1p": True, "mean": 0.0, "std": 1.0}
+
+        def _to_power(x):
+            """逆变换 log1p→z-score：还原真实功率。"""
+            x = np.asarray(x, dtype=np.float64) * p["std"] + p["mean"]
+            return np.expm1(x) if p.get("log1p") else x
+
         f = df_norm[s].first_valid_index()
         l = df_norm[s].last_valid_index()
         if f is None or l is None:
@@ -115,7 +129,7 @@ def main() -> None:
             X_load = load[pos:pos + input_steps][np.newaxis, :]
             X = np.concatenate([X_pub, X_load], axis=0)
             X_t = torch.from_numpy(X).unsqueeze(0).to(device)
-            y_pre = global_tcn(X_t).squeeze(0).cpu().numpy()   # (pred_len,)
+            y_pre = global_tcn(X_t).squeeze(0).cpu().numpy()   # (pred_len,) 归一化
 
             X_rc = X
             if loc_arr is not None:
@@ -126,21 +140,22 @@ def main() -> None:
             residual_t = torch.from_numpy(prev_residual).unsqueeze(0).to(device)
             e_corr = corrector(torch.from_numpy(y_pre).unsqueeze(0).to(device),
                                residual_t, X_rc_t).squeeze(0).cpu().numpy()  # (T,3)
-            y_final = y_pre[:, np.newaxis] + e_corr                 # (T,3)
+            y_final = y_pre[:, np.newaxis] + e_corr                 # (T,3) 归一化
 
-            actual = load[pos + input_steps:pos + input_steps + pred_len]
+            actual_norm = load[pos + input_steps:pos + input_steps + pred_len]
+            actual = load_raw[pos + input_steps:pos + input_steps + pred_len]  # 真实功率
 
             all_actual.append(actual)
-            all_base.append(y_pre)
-            all_rcp50.append(y_final[:, 1])
-            all_lo.append(y_final[:, 0])
-            all_hi.append(y_final[:, 2])
-            prev_residual = actual - y_pre
+            all_base.append(_to_power(y_pre))
+            all_rcp50.append(_to_power(y_final[:, 1]))
+            all_lo.append(_to_power(y_final[:, 0]))
+            all_hi.append(_to_power(y_final[:, 2]))
+            prev_residual = actual_norm - y_pre
             pos += args.stride
 
         # 记录最后一个（最大的 last_valid_index）序列，用于“最后一个窗口预测未来”
         if best_seq is None or l > best_seq[2]:
-            best_seq = (load, f, l)
+            best_seq = (load, f, l, _to_power)
 
     if not all_actual:
         raise RuntimeError("测试集没有可预测的窗口")
@@ -148,7 +163,7 @@ def main() -> None:
     # ---- 最后一个窗口预测未来（没有真实值，只给预测曲线/区间）----
     future = {"global": [], "rc": [], "lower": [], "upper": []}
     if best_seq is not None:
-        load_b, f_b, l_b = best_seq
+        load_b, f_b, l_b, _to_power = best_seq
         pos_f = l_b + 1 - input_steps          # 最后 input_steps 点作为输入
         if pos_f >= f_b and pos_f + input_steps <= l_b + 1:
             X_pub = pub_arr[pos_f:pos_f + input_steps].T
@@ -167,10 +182,10 @@ def main() -> None:
                 torch.from_numpy(X_rc).unsqueeze(0).to(device),
             ).squeeze(0).cpu().numpy()
             y_final = y_pre[:, np.newaxis] + e_corr
-            future = {"global": y_pre.tolist(),
-                      "rc": y_final[:, 1].tolist(),
-                      "lower": y_final[:, 0].tolist(),
-                      "upper": y_final[:, 2].tolist()}
+            future = {"global": _to_power(y_pre).tolist(),
+                      "rc": _to_power(y_final[:, 1]).tolist(),
+                      "lower": _to_power(y_final[:, 0]).tolist(),
+                      "upper": _to_power(y_final[:, 2]).tolist()}
 
     actuals = np.concatenate(all_actual)
     valid = ~np.isnan(actuals)

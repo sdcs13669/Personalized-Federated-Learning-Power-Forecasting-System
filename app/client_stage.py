@@ -15,14 +15,18 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-STAGE_DIR = Path(__file__).resolve().parent / "stage"
-WORK_DIR = Path(__file__).resolve().parent / "rc_work"   # 复用 rc 的临时工作目录
+# 单仓库多客户端：阶段状态/工作目录按进程隔离（FL_STAGE_DIR / FL_RC_WORK 由 agent 启动时设置）
+STAGE_DIR = Path(os.environ.get("FL_STAGE_DIR",
+                                str(Path(__file__).resolve().parent / "stage")))
+WORK_DIR = Path(os.environ.get("FL_RC_WORK",
+                               str(Path(__file__).resolve().parent / "rc_work")))
 
 RC_TYPE_DEFAULT = "tcn"          # 客户端修正器架构（与 server 端一致时按配置）
 

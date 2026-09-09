@@ -138,6 +138,10 @@ def create_app(web_dir: str | None = None,
     if cfg.get("data_dir"):
         DATA_DIR = Path(cfg["data_dir"]).resolve()
     os.environ["FL_DATA_DIR"] = str(DATA_DIR)   # trainer 也读同一数据目录
+    # 阶段状态/工作目录按客户端隔离（避免单仓库多客户端共享 app/stage 导致结果串）
+    _cid = (cfg.get("client_id") or "default").strip() or "default"
+    os.environ["FL_STAGE_DIR"] = str(_APP_DIR / f"stage_{_cid}")
+    os.environ["FL_RC_WORK"] = str(_APP_DIR / f"rc_work_{_cid}")
     if server_url:
         cfg["server_url"] = server_url
     if config_path:

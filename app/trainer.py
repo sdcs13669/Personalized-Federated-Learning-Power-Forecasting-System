@@ -1,6 +1,7 @@
 """flwr 客户端训练线程：加载本地采集数据 → FedClient → start_client。"""
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 
@@ -89,7 +90,8 @@ def start_training(grpc_addr: str, client_id: str, cfg: dict) -> str:
 
 
 def _find_csv() -> Path | None:
-    data_dir = Path(__file__).resolve().parent / "data"
+    data_dir = Path(os.environ.get("FL_DATA_DIR",
+                                   str(Path(__file__).resolve().parent / "data")))
     if not data_dir.exists():
         return None
     csvs = list(data_dir.glob("*.csv"))

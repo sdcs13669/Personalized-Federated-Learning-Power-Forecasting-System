@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -19,8 +20,12 @@ from pydantic import BaseModel
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 保证 `python app/agent.py` 运行时能 import app.*
 DEFAULT_WEB = ROOT / "web"
-CONFIG_PATH = Path(__file__).resolve().parent / "agent_config.json"
-DATA_DIR = Path(__file__).resolve().parent / "data"
+_APP_DIR = Path(__file__).resolve().parent
+# 同一仓库可跑多个客户端：FL_AGENT_CONFIG 指定各自的配置文件
+CONFIG_PATH = Path(os.environ.get("FL_AGENT_CONFIG",
+                                  str(_APP_DIR / "agent_config.json")))
+# 数据目录：默认 app/data，可用 FL_DATA_DIR 或配置里的 data_dir 覆盖
+DATA_DIR = Path(os.environ.get("FL_DATA_DIR", str(_APP_DIR / "data")))
 
 _default_config = {
     "server_url": "http://127.0.0.1:8000",
@@ -28,6 +33,7 @@ _default_config = {
     "password": "",
     "client_id": "",
     "local_port": 9001,
+    "data_dir": "",   # 空 = 默认 app/data；多客户端时指向各自的数据目录
 }
 
 # Task 1 演示数据集兜底清单（GitHub raw URL）。server 端 /api/datasets（Task 7）
@@ -126,8 +132,12 @@ class RcBody(BaseModel):
 def create_app(web_dir: str | None = None,
                server_url: str | None = None,
                config_path: Path | None = None) -> FastAPI:
+    global DATA_DIR
     web_dir = web_dir or str(DEFAULT_WEB)
     cfg = load_config()
+    if cfg.get("data_dir"):
+        DATA_DIR = Path(cfg["data_dir"]).resolve()
+    os.environ["FL_DATA_DIR"] = str(DATA_DIR)   # trainer 也读同一数据目录
     if server_url:
         cfg["server_url"] = server_url
     if config_path:

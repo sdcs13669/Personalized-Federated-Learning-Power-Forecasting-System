@@ -9,7 +9,7 @@ rolling-forecast protocol as training (input 144 steps / horizon 6, gap-free
 stride 6, prev-residual chain for the Corrector), and measures how often the
 actual load falls inside the predicted [P10, P90] interval:
 
-    coverage = mean(P10 <= y_true <= P90)      target ~ 80%
+    coverage = mean(P10 <= y_true <= P90)
 
 All interval bounds and actuals are de-normalised per sequence (log1p +
 z-score) before comparison, so numbers are in raw kWh units.
@@ -24,13 +24,14 @@ Outputs
 -------
 - ``fl_code/analysis/coverage/coverage_results.json``
 - ``fl_code/analysis/figs/fig_coverage_epsilon.png``  (aggregate coverage vs
-  epsilon + per-client bars, 80% target line)
+  epsilon + per-client coverage bars)
 
 Usage::
 
     python -m fl_code.coverage_eval
     python -m fl_code.coverage_eval --eps 0.5 7.5 --max-windows 2000
     python -m fl_code.coverage_eval --clients steel_ind_0 lcl_res_0
+    python -m fl_code.coverage_eval --fig-only   # redraw figures from the JSON
 """
 
 from __future__ import annotations
@@ -58,7 +59,6 @@ DEFAULT_FIG_DIR = ROOT / "fl_code" / "analysis" / "figs"
 
 EPS_LIST = ("0.5", "1.5", "3.5", "5.5", "7.5")
 RC_TYPES = ("mlp", "lstm", "tcn")
-TARGET_COVERAGE = 0.80
 
 # matplotlib palette (matches make_figures convention)
 EPS_COLORS = {
@@ -319,7 +319,6 @@ def make_figure(results: dict, eps_list: list[str], fig_path: Path,
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    T = TARGET_COVERAGE
     agg = results["aggregate"]
     per = results["per_client"]
     cids = results["client_order"]
@@ -334,9 +333,6 @@ def make_figure(results: dict, eps_list: list[str], fig_path: Path,
     cov_macro = [agg[e].get("coverage_macro") * 100 for e in eps_list]
     pinaw = [agg[e].get("pinaw_macro") * 100 for e in eps_list]
 
-    ax1.axhline(T * 100, color="#2ca02c", ls="--", lw=1.4,
-                label=(f"目标覆盖率 {T * 100:.0f}%" if cn
-                       else f"target coverage {T * 100:.0f}%"))
     ax1.plot(x, cov, "-o", color="#08519c", lw=2.2, ms=7, zorder=3,
              label=("dp+best-RC 整体覆盖率（合并）" if cn
                     else "pooled coverage"))
@@ -377,11 +373,10 @@ def make_figure(results: dict, eps_list: list[str], fig_path: Path,
                    if not all(np.isnan(v) for v in vals) else 0)
         ax2.bar(np.arange(n_c) + (i - n_e / 2 + 0.5) * w, vals, w,
                 label=f"ε={e}", color=EPS_COLORS[e], edgecolor="white", lw=0.4)
-    ax2.axhline(T * 100, color="#2ca02c", ls="--", lw=1.4)
     ax2.set_xticks(np.arange(n_c))
     ax2.set_xticklabels(cids, rotation=30, ha="right", fontsize=8.5)
     ax2.set_ylabel("P10-P90 覆盖率 (%)" if cn else "P10-P90 coverage (%)")
-    ax2.set_ylim(min(55, min(cov) - 6), max(xmax, T * 100) * 1.06)
+    ax2.set_ylim(min(55, min(cov) - 6), xmax * 1.06)
     ax2.grid(axis="y", color="#b0b0b0", lw=0.6, alpha=0.9)
     ax2.legend(loc="upper right", ncol=3, fontsize=8)
 
@@ -451,7 +446,32 @@ def make_pinaw_figure(results: dict, eps_list: list[str], fig_path: Path,
 # Main
 # ---------------------------------------------------------------------------
 
+def redraw_figures(results: dict, eps_list: list[str], fig_dir: Path,
+                   cn: bool) -> None:
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    fig_path = fig_dir / "fig_coverage_epsilon.png"
+    make_figure(results, eps_list, fig_path, cn)
+    print(f"Saved: {fig_path}")
+    pin_path = fig_dir / "fig_pinaw_per_client.png"
+    make_pinaw_figure(results, eps_list, pin_path, cn)
+    print(f"Saved: {pin_path}")
+
+
 def main(args: argparse.Namespace) -> None:
+    if args.fig_only:
+        json_path = Path(args.output_json) if args.output_json else DEFAULT_JSON
+        with open(json_path) as f:
+            results = json.load(f)
+        eps_list = [e.replace("epsilon-", "") for e in results["aggregate"]]
+        print(f"Fig-only redraw from {json_path}  (eps: {eps_list})")
+        redraw_figures({"aggregate": results["aggregate"],
+                        "per_client": results["per_client"],
+                        "client_order": results["client_order"]},
+                       eps_list,
+                       Path(args.fig_dir) if args.fig_dir else DEFAULT_FIG_DIR,
+                       setup_cn_font())
+        return
+
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     eps_list = [e.replace("epsilon-", "") for e in args.eps]
@@ -529,7 +549,6 @@ def main(args: argparse.Namespace) -> None:
             "pinaw_macro": float(np.mean(pinaws)) if pinaws else float("nan"),
             "n_total": n_tot,
             "num_clients": len(covs),
-            "target": TARGET_COVERAGE,
         }
         a = aggregate[eps]
         print(f"[ε={eps:4s}] pooled coverage={a['coverage_pooled'] * 100:.2f}%  "
@@ -555,22 +574,18 @@ def main(args: argparse.Namespace) -> None:
     print(f"\nSaved JSON: {out_json}")
 
     cn = setup_cn_font()
-    fig_dir = Path(args.fig_dir) if args.fig_dir else DEFAULT_FIG_DIR
-    fig_path = fig_dir / "fig_coverage_epsilon.png"
-    fig_path.parent.mkdir(parents=True, exist_ok=True)
-    make_figure({"aggregate": aggregate, "per_client": per_client,
-                 "client_order": client_ids}, eps_list, fig_path, cn)
-    print(f"Saved: {fig_path}")
-    pin_path = fig_dir / "fig_pinaw_per_client.png"
-    make_pinaw_figure({"per_client": per_client, "client_order": client_ids},
-                      eps_list, pin_path, cn)
-    print(f"Saved: {pin_path}")
+    redraw_figures({"aggregate": aggregate, "per_client": per_client,
+                    "client_order": client_ids}, eps_list,
+                   Path(args.fig_dir) if args.fig_dir else DEFAULT_FIG_DIR, cn)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="P10-P90 interval coverage for dp+best-RC across the "
                     "epsilon sweep (final-round DP global checkpoints)")
+    parser.add_argument("--fig-only", action="store_true",
+                        help="redraw both figures from an existing results "
+                             "JSON (no models, no evaluation) and exit")
     parser.add_argument("--eps", nargs="*", default=list(EPS_LIST),
                         help=f"Epsilon labels (default: {list(EPS_LIST)})")
     parser.add_argument("--round", type=int, default=30,

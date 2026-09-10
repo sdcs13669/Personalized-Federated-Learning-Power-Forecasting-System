@@ -48,10 +48,24 @@ def _state_dict_keys() -> list[str]:
     return list(build_tcn(TCNConfig()).state_dict().keys())
 
 
+class _StatusClient(CidEchoClient):
+    """CidEchoClient 加状态旁路：每轮 fit 把轮次/loss 写回 trainer._state，
+    供 /local/train-status（客户端页"训练中 · round=… · loss=…"）展示。
+    只读 fit 入参与返回值，不改训练逻辑（fed_core 仍是唯一真源）。"""
+
+    def fit(self, parameters, config):
+        _state["round"] = int(config.get("server_round") or 0)
+        tensors, n_train, metrics = super().fit(parameters, config)
+        _state["loss"] = metrics.get("loss")
+        return tensors, n_train, metrics
+
+
 def _run_flwr(grpc_addr: str, cache: dict, keys: list[str], cfg: dict) -> None:
     from flwr.client import start_client
     inner = FedClient(cache, keys, {**cfg, "budget_path": None})
-    client = CidEchoClient(inner, cfg["client_id"]).to_client()
+    client = _StatusClient(inner, cfg["client_id"]).to_client()
+    _state["round"] = 0
+    _state["loss"] = None
     _state["running"] = True
     try:
         start_client(server_address=grpc_addr, client=client)

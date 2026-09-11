@@ -47,6 +47,10 @@ DATASETS_FALLBACK = [
      "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/tetouan_1.zip"},
     {"id": "tetouan_2", "client_id": "tetouan_city_2",
      "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/tetouan_2.zip"},
+    {"id": "lcl_res_0", "client_id": "lcl_res_0",
+     "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/lcl_res_0.zip"},
+    {"id": "lcl_res_1", "client_id": "lcl_res_1",
+     "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/lcl_res_1.zip"},
 ]
 
 

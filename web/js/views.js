@@ -466,6 +466,8 @@ function showCollect() {
     { id: "tetouan_0", name: "城市用电 · 区域 1", client_id: "tetouan_city_0", desc: "Tetouan 区域 1 序列" },
     { id: "tetouan_1", name: "城市用电 · 区域 2", client_id: "tetouan_city_1", desc: "Tetouan 区域 2 序列" },
     { id: "tetouan_2", name: "城市用电 · 区域 3", client_id: "tetouan_city_2", desc: "Tetouan 区域 3 序列" },
+    { id: "lcl_res_0", name: "居民社区用电 · 早期投运", client_id: "lcl_res_0", desc: "6 个社区聚合负荷（相邻 30 户聚合）" },
+    { id: "lcl_res_1", name: "居民社区用电 · 后期投运", client_id: "lcl_res_1", desc: "5 个社区聚合负荷（相邻 30 户聚合）" },
   ];
   openModal(`
     <h3>采集数据</h3>

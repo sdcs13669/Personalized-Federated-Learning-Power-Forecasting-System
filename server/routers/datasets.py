@@ -28,6 +28,16 @@ DATASETS = [
      "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/tetouan_2.zip",
      "description": "Tetouan 城市用电 Zone3（居民区，364 天）",
      "size": "541K"},
+    {"id": "lcl_res_0", "name": "居民社区用电（早期投运）",
+     "client_id": "lcl_res_0",
+     "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/lcl_res_0.zip",
+     "description": "居民社区聚合负荷，早期投运（6 个社区，相邻 30 户聚合）",
+     "size": "2.3M"},
+    {"id": "lcl_res_1", "name": "居民社区用电（后期投运）",
+     "client_id": "lcl_res_1",
+     "url": "https://raw.githubusercontent.com/sdcs13669/Personalized-Federated-Learning-Power-Forecasting-System/main/data/app_datasets/lcl_res_1.zip",
+     "description": "居民社区聚合负荷，后期投运（5 个社区，相邻 30 户聚合）",
+     "size": "1.8M"},
 ]
 
 

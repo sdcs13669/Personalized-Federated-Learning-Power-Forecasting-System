@@ -155,6 +155,18 @@ def create_app(web_dir: str | None = None,
     app = FastAPI(title="FL Client Agent")
     token = {"value": None}
 
+    @app.middleware("http")
+    async def no_cache_static(request: Request, call_next):
+        """前端静态资源每次都要求浏览器向服务器验证。
+
+        否则改完前端浏览器仍跑缓存里的旧 JS，表现为"代码更新了页面没变"。
+        """
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/" or path.endswith((".html", ".js", ".css")):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
     @app.get("/local/status")
     def local_status():
         data_dir = DATA_DIR

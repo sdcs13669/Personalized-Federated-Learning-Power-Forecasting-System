@@ -1,7 +1,7 @@
 """FastAPI application entry point."""
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -26,6 +26,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def no_cache_static(request: Request, call_next):
+    """前端静态资源每次都要求浏览器向服务器验证。
+
+    否则改完前端（views.js 等）浏览器仍跑缓存里的旧 JS，
+    表现为"代码已更新但页面没变化"，团队协作时反复踩坑。
+    """
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.endswith((".html", ".js", ".css")):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
 
 # RC 对比图的静态目录（注意：将来 B 挂 web 前端 "/" 静态目录时，必须在它之后）
 RC_UPLOADS_DIR = Path(__file__).resolve().parent / "rc_uploads"

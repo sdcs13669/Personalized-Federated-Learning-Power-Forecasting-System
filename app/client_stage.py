@@ -131,6 +131,22 @@ def _read_client_metrics(result_json: Path, client_id: str) -> dict:
     return {}
 
 
+def _pct(fraction) -> float | None:
+    """把 train_personalized 的【小数】型 WAPE 转成项目通用的【百分比】。
+
+    train_personalized._metrics 返回 wape = Σ|p-a| / Σ|a|（小数，
+    其 docstring 写作 "in normalised space"）；而 app_stage_eval、
+    rc_runner 上传指标与前端显示一律按百分比。若不换算，
+    界面按 "%" 渲染时会小 100 倍（例如实际 5.24% 显示成 0.05%）。
+    """
+    if fraction is None:
+        return None
+    try:
+        return round(float(fraction) * 100, 4)
+    except (TypeError, ValueError):
+        return None
+
+
 def run_stage2(server_url: str, token: str, task_id: int,
                client_id: str, rc_type: str = RC_TYPE_DEFAULT,
                data_dir: str | None = None) -> dict:
@@ -192,8 +208,12 @@ def run_stage2(server_url: str, token: str, task_id: int,
         state.pop("error", None)   # 清掉上一次失败遗留的错误，避免界面误报
         state["epoch_losses"] = epoch_losses
         state["corrector_arch"] = rc_type
-        state["wape_global"] = cid_data.get("wape_baseline")
-        state["wape_rc"] = cid_data.get("wape_personalized")
+        # 单位统一：train_personalized 的 wape 是【小数】(Σ|p-a|/Σ|a|，见其
+        # _metrics 的 "in normalised space")，而本项目其它地方（app_stage_eval、
+        # rc_runner 上传、前端显示）一律是【百分比】。这里统一乘 100，
+        # 否则界面按 % 显示会小 100 倍。
+        state["wape_global"] = _pct(cid_data.get("wape_baseline"))
+        state["wape_rc"] = _pct(cid_data.get("wape_personalized"))
         state["finished_at"] = _now()
         _write(task_id, state)
         return state

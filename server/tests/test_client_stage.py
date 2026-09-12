@@ -9,7 +9,8 @@
 """
 import json
 
-from app.client_stage import _child_env, _parse_epoch_losses, _read_client_metrics
+from app.client_stage import (_child_env, _parse_epoch_losses, _pct,
+                              _read_client_metrics)
 
 
 def _write(tmp_path, payload):
@@ -111,3 +112,37 @@ def test_parse_epoch_losses_ignores_garbage_lines():
 def test_child_env_forces_utf8_io():
     env = _child_env()
     assert env["PYTHONIOENCODING"] == "utf-8"
+
+
+# ---------------------------------------------------------------------------
+# _pct：WAPE 单位统一（小数 -> 百分比）
+# ---------------------------------------------------------------------------
+
+def test_pct_converts_fraction_to_percent():
+    """train_personalized 给的是小数，项目其它地方用百分比。"""
+    assert _pct(0.0524) == 5.24
+    assert _pct(0.985947847366333) == 98.5948
+
+
+def test_pct_handles_none_and_zero():
+    assert _pct(None) is None
+    assert _pct(0) == 0.0
+    assert _pct(0.0) == 0.0
+
+
+def test_pct_handles_bad_type():
+    assert _pct("not-a-number") is None
+    assert _pct([1, 2]) is None
+
+
+def test_pct_on_real_result_payload(tmp_path):
+    """用真实 personalized_results.json 的形状串一遍：小数 -> 百分比。"""
+    per = {"wape_baseline": 0.985947847366333,
+           "wape_personalized": 0.8605257868766785,
+           "epoch_losses": [0.278277, 0.241518]}
+    p = tmp_path / "personalized_results.json"
+    p.write_text(json.dumps({"results": {"steel_ind_0": per}}), encoding="utf-8")
+
+    got = _read_client_metrics(p, "steel_ind_0")
+    assert _pct(got["wape_baseline"]) == 98.5948
+    assert _pct(got["wape_personalized"]) == 86.0526

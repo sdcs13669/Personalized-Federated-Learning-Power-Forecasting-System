@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -12,8 +13,14 @@ from fl_code.data_utils import (make_sliding_windows, preprocess,
 from fl_code.fed_core.client_core import CidEchoClient, FedClient
 from fl_code.models import TCNConfig, build_tcn
 
+# 首次连接训练通道的重试窗口。flwr 客户端「连不上就立刻退出、不重试」，
+# 而服务端的 flwr worker 要等点位「开始训练」才启动 —— 谁先谁后会踩空。
+# 这里给一个宽松窗口，让客户端先点也不至于整场训练缺席。
+CONNECT_RETRY_SECONDS = 180
+CONNECT_RETRY_INTERVAL = 3.0
+
 _state = {"thread": None, "running": False, "round": 0,
-          "loss": None, "grpc_addr": None}
+          "loss": None, "grpc_addr": None, "error": None}
 
 
 def build_train_cache(csv_path: str, seqs: list[str],
@@ -55,20 +62,51 @@ class _StatusClient(CidEchoClient):
 
     def fit(self, parameters, config):
         _state["round"] = int(config.get("server_round") or 0)
+        # 收到第一轮指令就说明连接已建立：清掉连接期的重试告警，
+        # 否则训练成功结束后界面上仍会显示"未连接训练通道"。
+        _state["error"] = None
         tensors, n_train, metrics = super().fit(parameters, config)
         _state["loss"] = metrics.get("loss")
         return tensors, n_train, metrics
 
 
 def _run_flwr(grpc_addr: str, cache: dict, keys: list[str], cfg: dict) -> None:
+    """连接训练通道并开始联邦训练；首次连接失败会自动重试。
+
+    为什么必须重试：flwr 客户端连不上会**立刻退出且不重试**（实测
+    `Connection refused` 后进程直接结束）。而服务端的 flwr worker 要等
+    「开始训练」才监听 8089 —— 若客户端先点，就会整场训练都缺席。
+    更糟的是原来这个失败完全静默：`/local/start` 已返回"训练已启动"，
+    异常在线程里被吞掉，界面上只看到该客户端"掉线"，无法判断原因。
+    现在改为：重试到 CONNECT_RETRY_SECONDS，并把最后一次错误写进 _state。
+    """
     from flwr.client import start_client
-    inner = FedClient(cache, keys, {**cfg, "budget_path": None})
-    client = _StatusClient(inner, cfg["client_id"]).to_client()
     _state["round"] = 0
     _state["loss"] = None
+    _state["error"] = None
     _state["running"] = True
+    deadline = time.time() + CONNECT_RETRY_SECONDS
     try:
-        start_client(server_address=grpc_addr, client=client)
+        while True:
+            # 每次尝试都新建 client，避免复用已失败连接的内部状态
+            inner = FedClient(cache, keys, {**cfg, "budget_path": None})
+            client = _StatusClient(inner, cfg["client_id"]).to_client()
+            try:
+                start_client(server_address=grpc_addr, client=client)
+                return                      # 正常跑完
+            except Exception as e:          # noqa: BLE001
+                # 只在「一次都没参与过任何一轮」时重试；已经跑过轮次说明是
+                # 中途断连，重连会让它以新身份插进训练中段，反而更乱。
+                if _state["round"] > 0 or time.time() >= deadline:
+                    _state["error"] = (
+                        f"无法连接训练通道 {grpc_addr}：{e}。"
+                        f"请确认服务端已点「开始训练」（worker 才会监听 8089），"
+                        f"并检查「训练通道」地址是否为服务端实际 IP。")
+                    raise
+                _state["error"] = (
+                    f"连接训练通道失败，自动重试中"
+                    f"（剩余 {int(deadline - time.time())} 秒）：{e}")
+                time.sleep(CONNECT_RETRY_INTERVAL)
     finally:
         _state["running"] = False
 
@@ -127,4 +165,5 @@ def get_train_status() -> dict:
     return {"running": _state["running"],
             "alive": thread is not None and thread.is_alive(),
             "round": _state["round"], "loss": _state["loss"],
+            "error": _state["error"],
             "grpc_addr": _state["grpc_addr"]}

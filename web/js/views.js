@@ -485,9 +485,21 @@ async function loadAgentStatus() {
       try {
         const tr = await (await fetch("/local/train-status")).json();
         const tel = document.getElementById("train-status");
-        if (tel) tel.textContent = tr.alive
-          ? `训练中 · round=${tr.round} · loss=${tr.loss ?? "-"}`
-          : (tr.running ? "训练结束" : "空闲");
+        if (tel) {
+          if (tr.alive) {
+            // 已连上但还没跑完：显示轮次与 loss；若中途有过连接告警也带上
+            tel.textContent = `训练中 · round=${tr.round} · loss=${tr.loss ?? "-"}`;
+            tel.style.color = "";
+          } else if (tr.error) {
+            // 连不上训练通道（例如服务端还没点"开始训练"）—— 以前这里完全
+            // 静默，界面上只表现为"这个客户端掉线了"，无从排查
+            tel.textContent = `未连接训练通道：${tr.error}`;
+            tel.style.color = "var(--danger)";
+          } else {
+            tel.textContent = tr.running ? "训练结束" : "空闲";
+            tel.style.color = "";
+          }
+        }
       } catch (e) {}
     }, 3000);
   } catch (e) {

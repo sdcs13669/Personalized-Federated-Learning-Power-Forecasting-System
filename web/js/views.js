@@ -1140,12 +1140,18 @@ function setupForecastPlayer(chartId, series) {
   const n = series.real.length;
   let idx = 0, timer = null;
   function draw() {
-    // 初始/重置时至少展示前 60 个点，否则只画 1 个点会看起来是空白
-    const upto = Math.min(Math.max(idx + 1, Math.min(60, n)), n);
+    // 未开始（初始/重置后）：只画 1 个点 = 空图 + 提示；点「播放」后从第 1 步逐段推进
+    const upto = Math.min(idx + 1, n);
     const x = Array.from({ length: upto }, (_, i) => i);
     const sl = (arr) => arr.slice(0, upto);
     chart.setOption({
       grid: CHART_GRID,
+      title: {
+        show: upto <= 1,
+        text: "点击「播放」开始演示",
+        left: "center", top: "middle",
+        textStyle: { color: "#94a3b8", fontSize: 14, fontWeight: "normal" },
+      },
       xAxis: { type: "category", data: x, ...axisX("预测步（30 分钟/步）") },
       yAxis: { type: "value", scale: true, ...axisY("用电负荷") },
       legend: { top: 0 },

@@ -77,6 +77,12 @@ def start_training(grpc_addr: str, client_id: str, cfg: dict) -> str:
     """在后台线程启动 flwr 客户端；返回状态消息。"""
     if _state["thread"] is not None and _state["thread"].is_alive():
         return "训练已在运行"
+    # 身份为空时原样往下走会变成 config[""] 的 KeyError，报错完全看不懂。
+    # 最常见的来源是误用了默认的 run_client.bat（其 client_id 为空）。
+    if not client_id:
+        raise RuntimeError(
+            "本客户端身份为空，无法开始训练。请使用对应机器的启动脚本"
+            "（如 run_client_m2c1.bat），不要用默认的 run_client.bat。")
     csv = _find_csv()
     if csv is None:
         raise RuntimeError("未找到已采集的数据，请先采集")
@@ -86,6 +92,10 @@ def start_training(grpc_addr: str, client_id: str, cfg: dict) -> str:
               / "fl_code" / "models" / "client_config.yaml") as f:
         config = yaml.safe_load(f)
     dataset_id = client_id.rsplit("_", 1)[0]
+    if dataset_id not in config:
+        raise RuntimeError(
+            f"client_id {client_id!r} 与数据集配置不匹配（推导出 {dataset_id!r}）。"
+            f"可用数据集：{', '.join(config.keys())}")
     dcfg = config[dataset_id]
     client_cfg = dcfg["clients"].get(client_id)
     if client_cfg is None:

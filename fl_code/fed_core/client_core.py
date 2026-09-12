@@ -182,6 +182,26 @@ class CidEchoClient(NumPyClient):
         return self._inner.get_parameters(config)
 
 
+def safe_count_noise(raw, sigma: float, adaptive: bool) -> float:
+    """自适应裁剪的「计数噪声」保底值。
+
+    自适应裁剪的 pre-pay 公式要求 count_noise > σ/2，否则无定义：
+    `accounting.adaptive_sigma_train` 会直接抛
+        ValueError: clip_count_noise 0.5 must be > sigma/2 (…)
+    实测后果很严重 —— 任务一旦勾选「自适应裁剪」，**所有客户端第一轮 fit
+    全部抛错 → 全员掉线、训练没有任何结果**（本项目默认
+    dp_clip_count_noise=0.5，而 ε=7.5 / 12 轮时 σ≈1.47，必然触发）。
+
+    这里把 count_noise 抬到至少 σ：pre-pay 系数 σ/√(1−1/4)=1.155σ，
+    即训练噪声多约 15%，公式有定义且不会过度加噪。
+    抬高计数噪声只意味着计数扰动更大（更保守），**不会削弱隐私保证**。
+    """
+    c = float(raw or 0.0)
+    if adaptive and sigma > 0 and 2 * c <= sigma:
+        return sigma
+    return c
+
+
 class FedClient(NumPyClient):
     """flwr client wrapping one participant's data + local DP training."""
 
@@ -199,6 +219,10 @@ class FedClient(NumPyClient):
     def fit(self, parameters, config):
         dp = None
         adaptive = bool(config.get("dp_adaptive_clip", False))
+
+        def _count_noise(raw, sigma: float) -> float:
+            return safe_count_noise(raw, sigma, adaptive)
+
         if config.get("dp_mode") not in (None, "none", ""):
             if config["dp_mode"] == "per_client":
                 # σ depends only on (n, batch, epochs, rounds, δ, ε) — all
@@ -222,17 +246,19 @@ class FedClient(NumPyClient):
                       "sigma": self._sigma_cache,
                       "target_epsilon": float(config["dp_target_epsilon"]),
                       "adaptive_clip": adaptive,
-                      "clip_count_noise": float(
-                          config.get("dpfedavg_clip_count_noise") or 0.0)}
+                      "clip_count_noise": _count_noise(
+                          config.get("dpfedavg_clip_count_noise"),
+                          self._sigma_cache)}
             else:
+                _sigma = float(config.get("dp_sigma") or 0.0)
                 dp = {"mode": config["dp_mode"],
                       "clipping_norm": float(config["dp_clip"]),
                       "delta": float(config["dp_delta"]),
-                      "sigma": float(config.get("dp_sigma") or 0.0),
+                      "sigma": _sigma,
                       "target_epsilon": float(config.get("dp_target_epsilon") or 0.0),
                       "adaptive_clip": adaptive,
-                      "clip_count_noise": float(
-                          config.get("dpfedavg_clip_count_noise") or 0.0)}
+                      "clip_count_noise": _count_noise(
+                          config.get("dpfedavg_clip_count_noise"), _sigma)}
         round_cfg = {**self.cfg,
                      "round": int(config["server_round"]),
                      "rounds": int(config["rounds"])}

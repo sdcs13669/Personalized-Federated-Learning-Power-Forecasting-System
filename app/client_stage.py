@@ -198,11 +198,12 @@ def run_stage2(server_url: str, token: str, task_id: int,
                "--output-dir", str(out_root),
                "--clients", client_id,
                "--epochs", str(int(epochs or STAGE2_EPOCHS_DEFAULT)),
-               "--rc-type", rc_type]
+               "--rc-type", rc_type,
+               # 始终显式传解析后的数据目录：train_personalized 的 --data-dir
+               # 是可选的，漏传会退回它自己的默认路径去读数据（读到不该读的）。
+               "--data-dir", str(_ddir)]
         if stride:
             cmd += ["--stride", str(int(stride))]
-        if data_dir:
-            cmd += ["--data-dir", data_dir]
         # 输出到临时目录，避免写正式产物目录
         res = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True,
                              encoding="utf-8", errors="replace",
@@ -306,9 +307,10 @@ def run_stage3(server_url: str, token: str, task_id: int,
                "--corrector", str(corr_pt),
                "--rc-type", rc_type,
                "--cid", client_id,
-               "--out", str(out_json)]
-        if data_dir:
-            cmd += ["--data-dir", data_dir]
+               "--out", str(out_json),
+               # app_stage_eval 的 --data-dir 是 required：必须显式传解析后的目录，
+               # 否则 argparse 直接报错（早期写法是 "有 data_dir 才加"，很脆）。
+               "--data-dir", str(_ddir)]
         res = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True,
                              encoding="utf-8", errors="replace",
                              env=_child_env(), timeout=1800)

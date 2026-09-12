@@ -4,5 +4,7 @@
   "password": "",
   "client_id": "lcl_res_0",
   "local_port": 9001,
-  "data_dir": ""
+  "data_dir": "",
+  "stage2_epochs": 6,
+  "stage2_stride": 192
 }

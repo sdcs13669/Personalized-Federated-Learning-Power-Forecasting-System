@@ -34,6 +34,11 @@ _default_config = {
     "client_id": "",
     "local_port": 9001,
     "data_dir": "",   # 空 = 默认 app/data；多客户端时指向各自的数据目录
+    # 二阶段（本地残差修正器）训练参数，留空则用 fl_code 的默认值。
+    # 训练代价随「序列数」成倍增长：1 条序列的客户端 15 epoch 约 3 分钟，
+    # 而 lcl_res 有 5~6 条序列（窗口数 13 倍），需调大 stride / 减少 epoch。
+    "stage2_epochs": None,
+    "stage2_stride": None,
 }
 
 # Task 1 演示数据集兜底清单（GitHub raw URL）。server 端 /api/datasets（Task 7）
@@ -322,7 +327,12 @@ def create_app(web_dir: str | None = None,
                 run_stage2(cfg["server_url"], t, body.task_id,
                            cfg.get("client_id", ""),
                            rc_type=cfg.get("rc_type", "tcn"),
-                           data_dir=str(DATA_DIR))
+                           data_dir=str(DATA_DIR),
+                           # 训练代价随序列数成倍增长（lcl_res 有 5~6 条序列，
+                           # 窗口数是 steel/tetouan 的十几倍），按客户端配置调整：
+                           #   "stage2_epochs": 6, "stage2_stride": 192
+                           epochs=cfg.get("stage2_epochs"),
+                           stride=cfg.get("stage2_stride"))
             except Exception:
                 pass  # 状态已写入 failed
         threading.Thread(target=_work, daemon=True).start()

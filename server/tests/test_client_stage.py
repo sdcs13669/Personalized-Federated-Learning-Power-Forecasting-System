@@ -8,9 +8,11 @@
      _parse_epoch_losses(None) 抛 AttributeError，二阶段直接失败。
 """
 import json
+from pathlib import Path
 
 from app.client_stage import (_child_env, _parse_epoch_losses, _pct,
                               _read_client_metrics)
+import app.client_stage as client_stage
 
 
 def _write(tmp_path, payload):
@@ -146,3 +148,87 @@ def test_pct_on_real_result_payload(tmp_path):
     got = _read_client_metrics(p, "steel_ind_0")
     assert _pct(got["wape_baseline"]) == 98.5948
     assert _pct(got["wape_personalized"]) == 86.0526
+
+
+# ---------------------------------------------------------------------------
+# run_stage2 的命令构造：epochs / stride 可按客户端配置
+#
+# 背景：窗口数随「序列数」成倍增长（lcl_res 有 5~6 条序列 → 13 倍窗口），
+# 默认 15 epoch 在 lcl_res 上要跑 30~40 分钟。这两个参数让大客户端可按配置
+# 调大 stride、减少 epoch，把耗时拉回 3~4 分钟量级。
+# ---------------------------------------------------------------------------
+
+class _FakeProc:
+    returncode = 0
+    stdout = "EPOCHLOSS 1 0.5\nEPOCHLOSS 2 0.4\n"
+    stderr = ""
+
+
+def _patch_stage2(tmp_path, monkeypatch):
+    """隔离目录 + 假下载 + 假子进程，返回被调用命令的列表。"""
+    monkeypatch.setattr(client_stage, "STAGE_DIR", tmp_path / "stage")
+    monkeypatch.setattr(client_stage, "WORK_DIR", tmp_path / "work")
+    monkeypatch.setattr(client_stage, "_download_global_model",
+                        lambda *a, **k: tmp_path / "global.pt")
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "x.csv").write_text("datetime,a\n", encoding="utf-8")
+
+    seen = []
+
+    def fake_run(cmd, **kwargs):
+        seen.append(list(cmd))
+        out = cmd[cmd.index("--output-dir") + 1]
+        rundir = Path(out) / "tcn"
+        rundir.mkdir(parents=True, exist_ok=True)
+        (rundir / "personalized_results.json").write_text(json.dumps({
+            "results": {"steel_ind_0": {
+                "wape_baseline": 0.05, "wape_personalized": 0.04,
+                "epoch_losses": [0.5, 0.4]}}}), encoding="utf-8")
+        return _FakeProc()
+
+    monkeypatch.setattr(client_stage.subprocess, "run", fake_run)
+    return seen, str(data_dir)
+
+
+def test_stage2_default_command_uses_fl_code_defaults(tmp_path, monkeypatch):
+    seen, data_dir = _patch_stage2(tmp_path, monkeypatch)
+    client_stage.run_stage2("http://s", "tok", 7, "steel_ind_0", "tcn", data_dir)
+
+    argv = seen[-1]
+    assert argv[argv.index("--epochs") + 1] == "15"
+    assert "--stride" not in argv, "默认不应显式传 stride（沿用 fl_code 默认）"
+    assert argv[argv.index("--rc-type") + 1] == "tcn"
+    assert argv[argv.index("--clients") + 1] == "steel_ind_0"
+
+
+def test_stage2_honours_configured_epochs_and_stride(tmp_path, monkeypatch):
+    seen, data_dir = _patch_stage2(tmp_path, monkeypatch)
+    client_stage.run_stage2("http://s", "tok", 7, "lcl_res_0", "tcn", data_dir,
+                            epochs=6, stride=192)
+
+    argv = seen[-1]
+    assert argv[argv.index("--epochs") + 1] == "6"
+    assert argv[argv.index("--stride") + 1] == "192"
+
+
+def test_stage2_epochs_only(tmp_path, monkeypatch):
+    seen, data_dir = _patch_stage2(tmp_path, monkeypatch)
+    client_stage.run_stage2("http://s", "tok", 7, "lcl_res_0", "tcn", data_dir,
+                            epochs=3)
+
+    argv = seen[-1]
+    assert argv[argv.index("--epochs") + 1] == "3"
+    assert "--stride" not in argv
+
+
+def test_stage2_state_marks_done_with_percent_wape(tmp_path, monkeypatch):
+    _seen, data_dir = _patch_stage2(tmp_path, monkeypatch)
+    st = client_stage.run_stage2("http://s", "tok", 7, "steel_ind_0", "tcn",
+                                 data_dir)
+
+    assert st["stage2"] == "done"
+    assert st["wape_global"] == 5.0        # 0.05 -> 5%
+    assert st["wape_rc"] == 4.0            # 0.04 -> 4%
+    assert st["epoch_losses"] == [0.5, 0.4]

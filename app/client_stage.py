@@ -147,12 +147,27 @@ def _pct(fraction) -> float | None:
         return None
 
 
+STAGE2_EPOCHS_DEFAULT = 15      # 与 train_personalized 的默认一致
+STAGE2_STRIDE_DEFAULT = None    # None = 用 train_personalized 自己的默认 stride
+
+
 def run_stage2(server_url: str, token: str, task_id: int,
                client_id: str, rc_type: str = RC_TYPE_DEFAULT,
-               data_dir: str | None = None) -> dict:
+               data_dir: str | None = None,
+               epochs: int | None = None,
+               stride: int | None = None) -> dict:
     """阶段2：下载全局模型 → 本地训练修正器 → 记录 epoch_losses。
 
     复用 rc_runner 已跑通的子进程调用 train_personalized。
+
+    epochs / stride 可按客户端配置（agent_config 里的 stage2_epochs /
+    stage2_stride），因为训练代价随「序列数」成倍增长：
+    make_sliding_windows 是「对每条序列各滑一遍」，实测窗口数
+      steel_ind_0 / tetouan_city_*: 1 条序列 → ~230 窗口  → 15 epoch 约 3 分钟
+      lcl_res_1: 5 条序列 → 2309 窗口
+      lcl_res_0: 6 条序列 → 3133 窗口（约 13 倍）→ 15 epoch 要 30–40 分钟
+    对这类客户端调大 stride（减少重叠窗口）或减少 epoch，才能把耗时拉回同一量级。
+    默认值与 train_personalized 保持一致，因此离线实验链路不受影响。
     """
     state = _read(task_id)
     state["stage2"] = "running"
@@ -182,8 +197,10 @@ def run_stage2(server_url: str, token: str, task_id: int,
                "--global-model", str(global_pt),
                "--output-dir", str(out_root),
                "--clients", client_id,
-               "--epochs", "15",
+               "--epochs", str(int(epochs or STAGE2_EPOCHS_DEFAULT)),
                "--rc-type", rc_type]
+        if stride:
+            cmd += ["--stride", str(int(stride))]
         if data_dir:
             cmd += ["--data-dir", data_dir]
         # 输出到临时目录，避免写正式产物目录

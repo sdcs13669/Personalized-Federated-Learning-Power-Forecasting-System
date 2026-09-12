@@ -1,6 +1,6 @@
 @echo off
-title FL-Agent-机器1-客户端3-9003 (tetouan_city_1)
-rem 机器1 · 客户端 3/3：tetouan_city_1，端口 9003，数据目录 app\data_m1c3
+title FL-Agent-机器1-客户端3-9003 (tetouan_city_2)
+rem 机器1 · 客户端 3/3：tetouan_city_2，端口 9003，数据目录 app\data_m1c3（需采集）
 cd /d %~dp0..
 set FL_AGENT_CONFIG=%~dp0agent_config_m1c3.json
 set FL_DATA_DIR=%~dp0data_m1c3

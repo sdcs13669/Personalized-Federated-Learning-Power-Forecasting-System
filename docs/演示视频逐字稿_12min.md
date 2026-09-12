@@ -13,8 +13,8 @@
 - [ ] 服务器机：`run_server.bat` 或 Docker 起平台（:8000）；确认 `http://localhost:8000/` 显示登录页（防旧容器占端口，`netstat -ano | findstr :8000 :8089` 应为空或只有本服务）
 - [ ] 客户端机 ×2，每台运行 **3 个 agent**（单机多开：`FL_AGENT_CONFIG` 指定各自配置 + `FL_DATA_DIR` 指定各自数据目录，状态互不串），共 **6 个参与方**；每台机器端口 **9001 / 9002 / 9003**
 - [ ] **客户端分配（开哪几个脚本，两台机器不要交叉）**：
-      **机器1**：`run_client_m1c1.bat`（steel_ind_0 :9001）+ `run_client_m1c2.bat`（tetouan_city_0 :9002）+ `run_client_m1c3.bat`（tetouan_city_1 :9003）—— **三个数据均已预采集，开箱即用**
-      **机器2**：`run_client_m2c1.bat`（lcl_res_0 :9001）+ `run_client_m2c2.bat`（lcl_res_1 :9002）+ `run_client_m2c3.bat`（tetouan_city_2 :9003）—— **三个需先点"采集数据"**
+      **机器1**：`run_client_m1c1.bat`（lcl_res_0 :9001）+ `run_client_m1c2.bat`（lcl_res_1 :9002）+ `run_client_m1c3.bat`（tetouan_city_2 :9003）—— **三个需先点"采集数据"**
+      **机器2**：`run_client_m2c1.bat`（steel_ind_0 :9001）+ `run_client_m2c2.bat`（tetouan_city_0 :9002）+ `run_client_m2c3.bat`（tetouan_city_1 :9003）—— **三个数据均已预采集，开箱即用**
 - [ ] ⚠️ **同一个 client_id 只能被一台机器使用**（两台都开同一个会被服务端 409 挡住）；**同一台机器不可开两套**（端口都是 9001/9002/9003 会冲突）
 - [ ] admin 账号（默认 admin/admin123）+ **6 个参赛方账号**提前注册好
 - [ ] **6 个客户端全部提前完成一次采集**（防现场 GitHub raw 超时；正式镜头只重演 1–2 个，其余直接用已采集状态）

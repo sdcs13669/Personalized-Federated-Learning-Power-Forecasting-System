@@ -86,6 +86,40 @@ def _download_global_model(server_url: str, token: str, task_id: int) -> Path:
     return pt
 
 
+def _child_env() -> dict:
+    """让子进程固定以 UTF-8 输出（父进程也按 UTF-8 解码）。
+
+    为什么必须显式指定：Windows 下 subprocess 的 text=True 默认按
+    locale(GBK/cp936) 解码。一旦子进程输出 UTF-8 字节（例如外层环境设了
+    PYTHONIOENCODING=utf-8，IDE/终端很常见），reader 线程会抛
+    UnicodeDecodeError，导致 res.stdout 变成 None，随后解析直接崩
+    （实测复现：AttributeError: 'NoneType' object has no attribute 'splitlines'）。
+    这里两端都钉死 UTF-8，与外部环境无关。
+    """
+    return {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+
+def _read_client_metrics(result_json: Path, client_id: str) -> dict:
+    """从 train_personalized 产出的 personalized_results.json 取本客户端结果。
+
+    ⚠️ 键名陷阱：train_personalized 把每客户端结果放在顶层 ``results`` 下
+    （以 client_id 为键）。本模块早期误读 ``client_metrics``，导致 cid_data
+    恒为空、``wape_global`` / ``wape_rc`` 永远写成 None。
+    这里优先 ``results``，并保留 ``client_metrics`` 兼容。
+    """
+    if not result_json.exists():
+        return {}
+    try:
+        data = json.loads(result_json.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    for key in ("results", "client_metrics"):
+        per = (data.get(key) or {}).get(client_id)
+        if per:
+            return per
+    return {}
+
+
 def run_stage2(server_url: str, token: str, task_id: int,
                client_id: str, rc_type: str = RC_TYPE_DEFAULT,
                data_dir: str | None = None) -> dict:
@@ -113,22 +147,15 @@ def run_stage2(server_url: str, token: str, task_id: int,
             cmd += ["--data-dir", data_dir]
         # 输出到临时目录，避免写正式产物目录
         res = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True,
-                             timeout=1800)
+                             encoding="utf-8", errors="replace",
+                             env=_child_env(), timeout=1800)
 
         # 解析 personalized_results.json（train_personalized 已含 per-client 结果）
         result_json = out_root / rc_type / "personalized_results.json"
-        cid_data = {}
-        if result_json.exists():
-            try:
-                all_res = json.loads(result_json.read_text(encoding="utf-8"))
-                cid_data = all_res.get("client_metrics", {}).get(client_id, {}) or {}
-                # 兼容：某些版本把 per-client 结果放 client_metrics
-                cid_data = all_res.get("client_metrics", {}).get(client_id, {}) or {}
-            except Exception:
-                cid_data = {}
+        cid_data = _read_client_metrics(result_json, client_id)
 
         if res.returncode != 0:
-            raise RuntimeError(f"二阶段训练失败: {res.stderr[-800:]}")
+            raise RuntimeError(f"二阶段训练失败: {(res.stderr or '')[-800:]}")
 
         # 从结果里取 epoch_losses / wape（若 train_personalized 该分支未存则留空）
         epoch_losses = cid_data.get("epoch_losses", [])
@@ -151,10 +178,11 @@ def run_stage2(server_url: str, token: str, task_id: int,
         raise
 
 
-def _parse_epoch_losses(stdout: str) -> list[float]:
+def _parse_epoch_losses(stdout: str | None) -> list[float]:
     out: list[float] = []
+    text = stdout or ""      # 抓取失败时 stdout 可能为 None，不能直接 splitlines
     # 优先取完整逐轮行 EPOCHLOSS k loss（train_personalized 已加）
-    for line in stdout.splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if line.startswith("EPOCHLOSS"):
             parts = line.split()
@@ -166,7 +194,7 @@ def _parse_epoch_losses(stdout: str) -> list[float]:
     if out:
         return out
     # 兜底：解析 "Epoch k/n  loss=x.xxxxxx"
-    for line in stdout.splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if line.startswith("Epoch ") and "loss=" in line:
             try:
@@ -210,9 +238,10 @@ def run_stage3(server_url: str, token: str, task_id: int,
         if data_dir:
             cmd += ["--data-dir", data_dir]
         res = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True,
-                             timeout=1800)
+                             encoding="utf-8", errors="replace",
+                             env=_child_env(), timeout=1800)
         if res.returncode != 0 or not out_json.exists():
-            raise RuntimeError(f"预测生成失败: {res.stderr[-800:]}")
+            raise RuntimeError(f"预测生成失败: {(res.stderr or '')[-800:]}")
 
         state["stage3"] = "ready"
         state["stage3_data_path"] = str(out_json)

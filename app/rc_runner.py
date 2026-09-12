@@ -37,10 +37,16 @@ def download_model_bytes(server_url: str, token: str, task_id: int) -> bytes:
                 f"常见原因：一阶段联邦训练还没跑完，或任务被「强制停止」"
                 f"（停止的任务不会保存模型）。请确认任务状态为「已完成」后重试。"
             ) from e
-        if e.code in (401, 403):
+        if e.code == 401:
             raise RuntimeError(
-                f"下载全局模型被拒绝（HTTP {e.code}）：请确认本客户端已登录平台，"
-                f"并且已经加入任务 {task_id}。") from e
+                f"下载全局模型被拒绝（HTTP 401：登录凭证已失效）。"
+                f"请在客户端页面【退出后重新登录】再试——重新登录后本机 agent "
+                f"会自动同步最新凭证。") from e
+        if e.code == 403:
+            raise RuntimeError(
+                f"下载全局模型被拒绝（HTTP 403：当前账号不是任务 {task_id} 的"
+                f"参与者）。请先在任务广场用密钥加入该任务，再开启二阶段。"
+            ) from e
         raise RuntimeError(
             f"下载全局模型失败（HTTP {e.code}）：{e.reason}") from e
     except urllib.error.URLError as e:

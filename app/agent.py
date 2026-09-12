@@ -313,7 +313,9 @@ def create_app(web_dir: str | None = None,
         import threading
         t = token["value"]
         if not t:
-            return JSONResponse(status_code=401, content={"detail": "未登录"})
+            return JSONResponse(status_code=401, content={
+                "detail": "本机 agent 尚无登录凭证：请先在本页面登录一次"
+                          "（登录后请求会带上凭证，agent 会自动同步）。"})
 
         def _work():
             try:
@@ -332,7 +334,9 @@ def create_app(web_dir: str | None = None,
         import threading
         t = token["value"]
         if not t:
-            return JSONResponse(status_code=401, content={"detail": "未登录"})
+            return JSONResponse(status_code=401, content={
+                "detail": "本机 agent 尚无登录凭证：请先在本页面登录一次"
+                          "（登录后请求会带上凭证，agent 会自动同步）。"})
 
         def _work():
             try:
@@ -363,14 +367,23 @@ def create_app(web_dir: str | None = None,
             body = await request.body()
         headers = {"Content-Type": "application/json"}
         # 优先透传前端携带的 Bearer（浏览器登录后请求带 token）；
-        # 没有时才用本地 /local/login 存储的 token。
+        # 没有时才用本地缓存的 token。
         auth = request.headers.get("authorization")
         t = token["value"]
         if auth:
             headers["Authorization"] = auth
-            # 缓存一份，供本地 stage2/3 下载全局模型等使用（未走 /local/login 时）
-            if not t:
-                token["value"] = auth[7:] if auth.lower().startswith("bearer ") else auth
+            # 始终用前端最新的 Bearer 覆盖本地缓存。
+            #
+            # 这份缓存供本地 stage2/stage3 下载全局模型、上传 RC 结果等使用。
+            # 早期写法是「只在缓存为空时才写入」→ 一个 agent 生命周期内只写一次，
+            # 之后前端重新登录（token 变了）也不会更新，于是出现：
+            #   页面一切正常（前端 token 有效），
+            #   但二阶段下载全局模型拿旧 token 去请求 → HTTP 401
+            #   （实测报错："下载全局模型被拒绝（HTTP 401）"），
+            # 而且刷新页面/重新登录都救不了，只能重启 agent。
+            new_t = auth[7:] if auth.lower().startswith("bearer ") else auth
+            if new_t and new_t != t:
+                token["value"] = new_t
         elif t:
             headers["Authorization"] = "Bearer " + t
         url = cfg["server_url"] + "/api/" + path

@@ -1,16 +1,18 @@
-"""Task CRUD: create, list (square), detail, cancel."""
+"""Task CRUD: create, list (square), detail, cancel, delete."""
 from __future__ import annotations
 
 import secrets
 import hashlib
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from server.database import get_db
-from server.models import Task, User, Participant
+from server.models import AuditRound, Participant, RcResult, Task, User
 from server.routers.auth import get_current_user_from_header
+from server.fl_runner import MODEL_DIR, get_task_status
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 my_router = APIRouter(prefix="/api", tags=["tasks"])
@@ -171,3 +173,102 @@ def cancel_task(
     db.commit()
     db.refresh(task)
     return _task_to_dict(task)
+
+
+# ---------------------------------------------------------------------------
+# 删除任务（录制/演示前清理历史任务用）
+# ---------------------------------------------------------------------------
+
+_RC_UPLOADS = Path(__file__).resolve().parent.parent / "rc_uploads"
+
+
+def _remove_task_files(task_id: int) -> None:
+    """删除任务落盘的产物：最终模型、worker 日志、RC 对比图。"""
+    targets = [MODEL_DIR / f"fl_model_{task_id}.pkl",
+               MODEL_DIR / f"fl_worker_{task_id}.log"]
+    if _RC_UPLOADS.exists():
+        targets += list(_RC_UPLOADS.glob(f"task{task_id}_*.png"))
+    for p in targets:
+        try:
+            p.unlink()
+        except OSError:
+            pass   # 不存在或被占用都不阻塞删库
+
+
+def _purge_task_data(db: Session, task: Task) -> None:
+    """删任务本体 + 关联行 + 落盘产物。
+
+    模型的外键没配 cascade，必须显式删 audit_rounds / participants /
+    rc_results，否则会留孤儿行（管理端统计与审计导出会读到脏数据）。
+    """
+    db.query(AuditRound).filter(AuditRound.task_id == task.id).delete()
+    db.query(Participant).filter(Participant.task_id == task.id).delete()
+    db.query(RcResult).filter(RcResult.task_id == task.id).delete()
+    db.delete(task)
+    db.commit()
+    _remove_task_files(task.id)
+
+
+@router.delete("/{task_id}")
+def delete_task(
+    task_id: int,
+    user: User = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """删除单个任务（创建者或管理员）。训练中的任务须先强制停止。"""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.creator_id != user.id and user.role != "admin":
+        raise HTTPException(status_code=403,
+                            detail="Only the creator or admin can delete")
+    if get_task_status(task_id) == "training":
+        raise HTTPException(
+            status_code=400,
+            detail="该任务正在训练中，请先点「强制停止训练」再删除")
+
+    _purge_task_data(db, task)
+    return {"ok": True, "deleted_id": task_id,
+            "message": f"任务 {task_id} 已删除（含审计与参与记录）"}
+
+
+class PurgeRequest(BaseModel):
+    include_recruiting: bool = False
+
+
+@my_router.post("/tasks/purge")
+def purge_tasks(
+    req: PurgeRequest,
+    user: User = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """批量清理历史任务（录制/演示前把界面清干净）。
+
+    默认只清终态任务（已完成/失败/已停止/已取消）；
+    include_recruiting=true 连「招募中」的一起清。
+    训练中的任务一律跳过——必须先强制停止，避免删掉正在写的审计。
+    """
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    # 范围里包含 training：区分"真在训练"与"历史卡死的 training 残留"
+    # 靠 get_task_status()（看有没有真实子进程）判断——卡死残留应当可清，
+    # 否则录制时界面上会永远挂着几个假的「训练中」任务。
+    statuses = ["completed", "failed", "stopped", "cancelled", "training"]
+    if req.include_recruiting:
+        statuses.append("recruiting")
+
+    tasks = db.query(Task).filter(Task.status.in_(statuses)).all()
+    deleted, skipped = [], []
+    for t in tasks:
+        if get_task_status(t.id) == "training":
+            skipped.append(t.id)
+            continue
+        _purge_task_data(db, t)
+        deleted.append(t.id)
+
+    msg = f"已清理 {len(deleted)} 个历史任务"
+    if skipped:
+        msg += f"，跳过 {len(skipped)} 个训练中的任务"
+    return {"ok": True, "deleted": len(deleted), "deleted_ids": deleted,
+            "skipped_training": skipped, "message": msg}

@@ -565,14 +565,25 @@ async function doStartTrain() {
 function renderAdmin() {
   document.getElementById("view").innerHTML = `
     <div class="card">
-      <h3 style="margin-bottom:12px;">管理大屏 - 全部任务</h3>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+        <h3 style="margin:0;">管理大屏 - 全部任务</h3>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <button class="danger" onclick="doPurgeTasks()">清理历史任务</button>
+          <span style="color:var(--muted);font-size:12.5px;">录制/演示前用：清掉已结束的任务（训练中的自动跳过）</span>
+        </div>
+      </div>
       <table><thead><tr>
         <th>ID</th><th>任务名</th><th>发起者</th><th>状态</th><th>轮次</th>
         <th>参与</th><th>操作</th>
       </tr></thead><tbody id="admin-rows"></tbody></table>
     </div>`;
+  loadAdminRows();
+}
+
+function loadAdminRows() {
   api("/api/tasks").then(tasks => {
     const rows = document.getElementById("admin-rows");
+    if (!rows) return;
     if (!tasks.length) {
       rows.innerHTML = `<tr><td colspan="7" class="empty-row">还没有任务</td></tr>`;
       return;
@@ -581,9 +592,40 @@ function renderAdmin() {
       <tr>
         <td>${t.id}</td><td>${t.name}</td><td>${t.creator}</td><td>${statusBadge(t.status)}</td>
         <td>${t.current_round || 0}/${t.rounds}</td><td>${t.participant_count}</td>
-        <td><button class="secondary" onclick="location.hash='#/task/${t.id}'">进入大屏</button></td>
+        <td>
+          <button class="secondary" onclick="location.hash='#/task/${t.id}'">进入大屏</button>
+          <button class="danger" style="margin-left:6px;" onclick="doDeleteTask(${t.id}, '${t.name}')">删除</button>
+        </td>
       </tr>`).join("");
   }).catch(e => showToast(e.message, true));
+}
+
+// ===== 删除单个任务（创建者/管理员）=====
+async function doDeleteTask(taskId, taskName) {
+  if (!confirm(`确定删除任务「${taskName}」(ID ${taskId})？\n\n` +
+               `· 该任务的审计记录、参与记录、RC 结果会一并删除\n` +
+               `· 已保存的模型文件与训练日志也会删除\n` +
+               `· 训练中的任务需要先「强制停止训练」`)) return;
+  try {
+    const r = await api(`/api/tasks/${taskId}`, { method: "DELETE" });
+    showToast(r.message || "任务已删除");
+    loadAdminRows();
+  } catch (e) { showToast(e.message, true); }
+}
+
+// ===== 一键清理历史任务（录制前把界面清干净）=====
+async function doPurgeTasks() {
+  if (!confirm("清理所有已结束的历史任务？\n\n" +
+               "· 范围：已完成 / 失败 / 已停止 / 已取消\n" +
+               "· 「招募中」的任务会保留\n" +
+               "· 训练中的任务自动跳过（需先强制停止）\n\n" +
+               "该操作不可撤销，确定继续？")) return;
+  try {
+    const r = await api("/api/tasks/purge",
+                        { method: "POST", body: JSON.stringify({ include_recruiting: false }) });
+    showToast(r.message || "已清理历史任务");
+    loadAdminRows();
+  } catch (e) { showToast(e.message, true); }
 }
 
 // ===== 任务详情大屏（Task 8：6 图 + 轮询刷新）=====

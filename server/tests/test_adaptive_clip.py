@@ -1,4 +1,6 @@
 """Adaptive clipping: task fields, validation, audit clip_norm."""
+import pickle
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
@@ -131,23 +133,24 @@ def test_on_round_done_writes_clip_norm(tmp_path):
         engine.dispose()
 
 
-def test_run_flwr_server_persists_clip_norm(tmp_path, monkeypatch):
+def test_run_flwr_server_persists_clip_norm(tmp_path):
     """端到端（无真实 gRPC）：on_round_done 把 row["clip_norm"] 写入 audit_rounds。
 
-    用假 start_server 驱动一次 aggregate_fit，完整走 _run_flwr_server 的
-    真实 on_round_done 闭包 → DB。
+    注入假 start_server 驱动一次 aggregate_fit，完整走 fl_server_worker
+    真实的 run_flwr_server 链路（含真实 on_round_done 回调）→ DB；
+    同时验证任务状态复位为 completed、全局模型已落盘。
     """
-    import flwr.server
     from flwr.common import Code, FitRes, Status, ndarrays_to_parameters
 
     from fl_code.models import TCNConfig, build_tcn
-    from server.fl_runner import _run_flwr_server, ActiveTask
+    from server.fl_server_worker import run_flwr_server
     from server.models import Task, User, AuditRound
 
     engine = db_mod.get_engine(f"sqlite:///{tmp_path}/fl_runner.db")
     db_mod.Base.metadata.create_all(bind=engine)
     db_mod._migrate(engine)
     factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+    model_out = tmp_path / "fl_model_final.pkl"
     try:
         db = factory()
         user = User(username="runner_u", password_hash="h")
@@ -173,18 +176,17 @@ def test_run_flwr_server_persists_clip_norm(tmp_path, monkeypatch):
                              "dpfedavg_clip_fraction": 0.9})))
             strategy.aggregate_fit(1, results, [])
 
-        monkeypatch.setattr(flwr.server, "start_server", fake_start_server)
-
         task_dict = {"id": task_id, "name": "t", "rounds": 3,
                      "round_timeout": None,
+                     "participants": [{"client_id": "a"}, {"client_id": "b"}],
                      "cfg": {"dp_adaptive_clip": True, "dp_clip": 2.5,
                              "dp_clip_lr": 0.2,
                              "dp_clip_target_quantile": 0.5,
                              "dp_clip_count_noise": 0.5,
                              "dp_mode": "per_client"}}
-        participants = [{"client_id": "a"}, {"client_id": "b"}]
-        active = ActiveTask(task_id=task_id)
-        _run_flwr_server(task_dict, participants, factory, active)
+        ok = run_flwr_server(task_dict, factory, model_out,
+                             start_server_fn=fake_start_server)
+        assert ok is True
 
         db = factory()
         try:
@@ -195,5 +197,10 @@ def test_run_flwr_server_persists_clip_norm(tmp_path, monkeypatch):
             assert db.query(Task).get(task_id).status == "completed"
         finally:
             db.close()
+
+        # worker 应把全局模型落盘，供 fl_runner.get_final_model 读取
+        assert model_out.exists()
+        data = pickle.loads(model_out.read_bytes())
+        assert data["keys"] and data["tensors"]
     finally:
         engine.dispose()

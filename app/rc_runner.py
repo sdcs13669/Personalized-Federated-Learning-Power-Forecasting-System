@@ -4,9 +4,15 @@ from __future__ import annotations
 import pickle
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# 访问服务端（Tailscale/内网地址）必须强制直连：系统代理（Clash 等）会劫持导致
+# 二阶段“下载全局模型” 502 Bad Gateway / 超时。数据集下载（collector，走 GitHub）
+# 仍使用默认 opener 以便复用系统代理。
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def download_model_bytes(server_url: str, token: str, task_id: int) -> bytes:
@@ -22,7 +28,7 @@ def download_model_bytes(server_url: str, token: str, task_id: int) -> bytes:
         server_url + f"/api/tasks/{task_id}/model",
         headers={"Authorization": "Bearer " + token})
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with _NO_PROXY_OPENER.open(req, timeout=30) as resp:
             return resp.read()
     except urllib.error.HTTPError as e:
         if e.code == 404:
@@ -82,5 +88,5 @@ def upload_rc_result(server_url: str, token: str, task_id: int,
         data=body, method="POST",
         headers={"Authorization": "Bearer " + token,
                  "Content-Type": f"multipart/form-data; boundary={boundary}"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with _NO_PROXY_OPENER.open(req, timeout=30) as resp:
         return resp.status == 200

@@ -643,11 +643,11 @@ async function loadTaskDetail(id) {
 }
 
 // 统一样式：所有图表必须标明横纵坐标含义（评审要求，明确表达训练轮次/参与人数等）
-const CHART_GRID = { left: 48, right: 52, top: 46, bottom: 42, containLabel: true };
+const CHART_GRID = { left: 76, right: 76, top: 46, bottom: 54, containLabel: true };
 const AXIS_NAME_TEXT = { fontSize: 12, color: "#475569" };
-const axisX = (name) => ({ name, nameLocation: "middle", nameGap: 20,
+const axisX = (name) => ({ name, nameLocation: "middle", nameGap: 30,
                            nameTextStyle: AXIS_NAME_TEXT });
-const axisY = (name) => ({ name, nameLocation: "middle", nameGap: 24,
+const axisY = (name) => ({ name, nameLocation: "middle", nameGap: 56,
                            nameRotate: 90, nameTextStyle: AXIS_NAME_TEXT });
 
 function renderCharts(audit, rc) {
@@ -868,6 +868,13 @@ function renderClientTask(body, built, ctx) {
   }
   // 一阶段是否结束（进入 recruiting/training 之外的终态即认为一阶段结束）
   const phase1Done = (task.status === "completed" || task.status === "cancelled");
+  // 当前阶段：按 一阶段 → 二阶段 → 三阶段 的真实状态推导（随轮询自动更新）
+  const phaseLabel = !phase1Done ? "阶段1·训练中"
+    : s2 === "running" ? "阶段2·训练中"
+    : s2 === "failed" ? "阶段2失败（可重试）"
+    : s2 === "done" ? (s3 === "running" ? "阶段3·生成中"
+                       : s3 === "ready" ? "阶段3完成" : "阶段2完成")
+    : "阶段1完成（待开启二阶段）";
 
   if (!built) {
     body.innerHTML = `
@@ -875,7 +882,7 @@ function renderClientTask(body, built, ctx) {
         <div class="stat"><div class="num" id="ct-status">${task.status}</div><div class="lbl">状态</div></div>
         <div class="stat"><div class="num" id="ct-round">${task.current_round || 0}/${task.rounds}</div><div class="lbl">轮次</div></div>
         <div class="stat"><div class="num" id="ct-cid" style="font-size:16px;">${myCid || "未知"}</div><div class="lbl">本客户端</div></div>
-        <div class="stat"><div class="num" id="ct-phase" style="font-size:18px;">阶段1</div><div class="lbl">当前阶段</div></div>
+        <div class="stat"><div class="num" id="ct-phase" style="font-size:18px;">${phaseLabel}</div><div class="lbl">当前阶段</div></div>
       </div>
       <div class="grid2">
         <div class="card"><h4>我的隐私预算 ε 累计</h4><p class="page-sub" style="margin-bottom:8px;">仅本客户端 ${myCid || ""}</p><div id="ch-self-eps" class="chart"></div></div>
@@ -888,12 +895,12 @@ function renderClientTask(body, built, ctx) {
       </div>
       <div id="ct-stage2"></div>
       <div id="ct-stage3"></div>`;
-  } else {
-    const set = (n, v) => { const el = document.getElementById(n); if (el) el.textContent = v; };
-    set("ct-status", task.status);
-    set("ct-round", `${task.current_round || 0}/${task.rounds}`);
-    set("ct-phase", phase1Done ? "阶段1完成" : "阶段1·训练中");
   }
+  // 状态卡片统一更新（"当前阶段"随二/三阶段推进自动变化）
+  const setStat = (n, v) => { const el = document.getElementById(n); if (el) el.textContent = v; };
+  setStat("ct-status", task.status);
+  setStat("ct-round", `${task.current_round || 0}/${task.rounds}`);
+  setStat("ct-phase", phaseLabel);
   // 阶段1：本方审计明细表 + 两条曲线
   renderMyAuditTable("my-audit-table", audit, myCid);
   setChart("ch-self-eps", {
@@ -1133,7 +1140,8 @@ function setupForecastPlayer(chartId, series) {
   const n = series.real.length;
   let idx = 0, timer = null;
   function draw() {
-    const upto = Math.min(idx + 1, n);
+    // 初始/重置时至少展示前 60 个点，否则只画 1 个点会看起来是空白
+    const upto = Math.min(Math.max(idx + 1, Math.min(60, n)), n);
     const x = Array.from({ length: upto }, (_, i) => i);
     const sl = (arr) => arr.slice(0, upto);
     chart.setOption({

@@ -203,10 +203,13 @@ function renderPlaza() {
           ? "浏览可加入的联邦学习任务，或发起新任务"
           : "浏览可加入的联邦学习任务，凭服务端下发的密钥加入"}</p>
       </div>
-      ${isServer ? `<button onclick="showCreateTask()">
+      ${isServer ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        ${App.user && App.user.role === "admin"
+          ? `<button class="danger" onclick="doPurgeTasks()">清理历史任务</button>` : ""}
+        <button onclick="showCreateTask()">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         发起新任务
-      </button>` : ""}
+      </button></div>` : ""}
     </div>
     <div class="stat-cards anim-in anim-d1">
       <div class="stat"><div class="num" id="st-total">–</div><div class="lbl">全部任务</div></div>
@@ -244,7 +247,9 @@ async function loadPlaza() {
         <td>${t.name}</td><td>${t.creator}</td><td>${t.rounds}</td>
         <td>${t.dp_epsilon ?? "未启用"}</td><td>${statusBadge(t.status)}</td><td>${t.participant_count}</td>
         <td>${t.status === "recruiting" ? `<button class="secondary" onclick="showJoinTask(${t.id},'${t.name}')">加入</button>` : ""}
-            ${App.user && (App.user.role === "admin" || t.creator === App.user.username) ? `<button class="secondary" onclick="location.hash='#/task/${t.id}'">详情</button>` : ""}</td>
+            ${App.user && (App.user.role === "admin" || t.creator === App.user.username) ? `
+              <button class="secondary" onclick="location.hash='#/task/${t.id}'">详情</button>
+              <button class="danger" style="margin-left:6px;" onclick="doDeleteTask(${t.id}, '${t.name}')">删除</button>` : ""}</td>
       </tr>`).join("");
   } catch (e) { showToast(e.message, true); }
 }
@@ -600,6 +605,12 @@ function loadAdminRows() {
   }).catch(e => showToast(e.message, true));
 }
 
+// 删除/清理后按"当前所在页面"刷新对应列表（广场 or 管理大屏）
+function refreshTaskList() {
+  if ((location.hash || "").includes("/admin")) loadAdminRows();
+  else loadPlaza();
+}
+
 // ===== 删除单个任务（创建者/管理员）=====
 async function doDeleteTask(taskId, taskName) {
   if (!confirm(`确定删除任务「${taskName}」(ID ${taskId})？\n\n` +
@@ -609,22 +620,22 @@ async function doDeleteTask(taskId, taskName) {
   try {
     const r = await api(`/api/tasks/${taskId}`, { method: "DELETE" });
     showToast(r.message || "任务已删除");
-    loadAdminRows();
+    refreshTaskList();
   } catch (e) { showToast(e.message, true); }
 }
 
 // ===== 一键清理历史任务（录制前把界面清干净）=====
 async function doPurgeTasks() {
   if (!confirm("清理所有已结束的历史任务？\n\n" +
-               "· 范围：已完成 / 失败 / 已停止 / 已取消\n" +
+               "· 范围：已完成 / 失败 / 已停止 / 已取消 / 卡死的训练残留\n" +
                "· 「招募中」的任务会保留\n" +
-               "· 训练中的任务自动跳过（需先强制停止）\n\n" +
+               "· 真正在训练的任务自动跳过\n\n" +
                "该操作不可撤销，确定继续？")) return;
   try {
     const r = await api("/api/tasks/purge",
                         { method: "POST", body: JSON.stringify({ include_recruiting: false }) });
     showToast(r.message || "已清理历史任务");
-    loadAdminRows();
+    refreshTaskList();
   } catch (e) { showToast(e.message, true); }
 }
 

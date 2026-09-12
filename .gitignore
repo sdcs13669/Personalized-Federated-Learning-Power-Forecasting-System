@@ -37,3 +37,19 @@ server/rc_uploads/
 #App 运行产物（不入库）
 data/fl_server.db
 app/data/
+
+#单机多客户端：每个客户端独立的 数据/阶段状态/工作 目录（运行时生成，不入库）
+app/data_*/
+app/stage_*/
+app/rc_work_*/
+
+#单客户端默认目录（未设 FL_STAGE_DIR / FL_RC_WORK 时生成，不入库）
+app/stage/
+app/rc_work/
+
+#二阶段/三阶段产物（修正器权重与预测 JSON，不入库）
+app/rc_work*/
+
+#flwr worker 运行产物（MODEL_DIR 指向仓库 data 目录时生成，不入库）
+data/fl_model_*.pkl
+data/fl_worker_*.log

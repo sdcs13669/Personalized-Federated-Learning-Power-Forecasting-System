@@ -56,15 +56,26 @@ def _write(task_id: int, state: dict) -> None:
 
 
 def get_status(task_id: int) -> dict:
-    """供 /local/stage-status 调用。"""
+    """供 /local/stage-status 调用。
+
+    必须带上 ``error``：前端在 stage2/stage3 为 failed 时会展示它
+    （views.js 读 st.error）。早期版本漏了这个字段，界面就永远只显示
+    "未知错误，查看 agent 窗口日志"，把真正的失败原因（模型未就绪 /
+    未采集数据 / 身份为空）全藏住了。
+    """
     s = _read(task_id)
-    return {
+    out = {
         "task_id": task_id,
         "stage2": s.get("stage2", "idle"),
         "stage3": s.get("stage3", "idle"),
         "stage2_epoch_losses": s.get("epoch_losses", []),
         "corrector_arch": s.get("corrector_arch"),
+        "wape_global": s.get("wape_global"),
+        "wape_rc": s.get("wape_rc"),
     }
+    if s.get("error"):
+        out["error"] = s["error"]
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +144,20 @@ def run_stage2(server_url: str, token: str, task_id: int,
     _write(task_id, state)
 
     try:
+        # 前置校验：二阶段依赖"已加入任务的客户端身份 + 已采集的本地数据 +
+        # 一阶段产出的全局模型"三件事，任缺其一都在子进程里炸得很难看
+        # （实测只看到 HTTP 404 / KeyError），这里提前给出可操作的提示。
+        if not client_id:
+            raise RuntimeError(
+                "本客户端身份为空，无法开启二阶段。请先在平台「加入任务」"
+                "并完成数据采集，确认客户端身份已绑定后重试。")
+        _ddir = (Path(data_dir) if data_dir
+                 else Path(__file__).resolve().parent / "data")
+        if not _ddir.exists() or not list(_ddir.glob("*.csv")):
+            raise RuntimeError(
+                f"未找到已采集的数据（目录：{_ddir}）。"
+                f"请先在本客户端点击「采集数据」下载数据源，再开启二阶段。")
+
         global_pt = _download_global_model(server_url, token, task_id)
         out_root = WORK_DIR / f"stage2_task{task_id}"
         out_root.mkdir(parents=True, exist_ok=True)
@@ -164,6 +189,7 @@ def run_stage2(server_url: str, token: str, task_id: int,
             epoch_losses = _parse_epoch_losses(res.stdout)
 
         state["stage2"] = "done"
+        state.pop("error", None)   # 清掉上一次失败遗留的错误，避免界面误报
         state["epoch_losses"] = epoch_losses
         state["corrector_arch"] = rc_type
         state["wape_global"] = cid_data.get("wape_baseline")
@@ -223,6 +249,15 @@ def run_stage3(server_url: str, token: str, task_id: int,
         raise RuntimeError("请先完成二阶段训练（开启二阶段）")
 
     try:
+        if not client_id:
+            raise RuntimeError(
+                "本客户端身份为空，无法生成本地预测。请先加入任务并完成采集。")
+        _ddir = (Path(data_dir) if data_dir
+                 else Path(__file__).resolve().parent / "data")
+        if not _ddir.exists() or not list(_ddir.glob("*.csv")):
+            raise RuntimeError(
+                f"未找到已采集的数据（目录：{_ddir}）。请先采集数据再生成预测。")
+
         global_pt = _download_global_model(server_url, token, task_id)
         corr_pt = WORK_DIR / f"stage2_task{task_id}" / rc_type / f"corrector_{client_id}.pt"
         if not corr_pt.exists():
@@ -244,6 +279,7 @@ def run_stage3(server_url: str, token: str, task_id: int,
             raise RuntimeError(f"预测生成失败: {(res.stderr or '')[-800:]}")
 
         state["stage3"] = "ready"
+        state.pop("error", None)   # 同上：成功即清掉遗留错误
         state["stage3_data_path"] = str(out_json)
         _write(task_id, state)
         return state

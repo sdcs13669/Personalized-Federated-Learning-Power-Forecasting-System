@@ -10,13 +10,37 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def download_model_bytes(server_url: str, token: str, task_id: int) -> bytes:
-    """下载最终模型（pickle: {keys, tensors}）。"""
+    """下载最终模型（pickle: {keys, tensors}）。
+
+    失败时必须给出可操作的提示：二阶段/预测展示的第一步就是这个下载，
+    而服务端在"一阶段未完成或被停止"时只会回 404，原生异常
+    （HTTP Error 404: Not Found）对使用者毫无线索，实测就是这么卡住的。
+    """
+    import urllib.error
     import urllib.request
     req = urllib.request.Request(
         server_url + f"/api/tasks/{task_id}/model",
         headers={"Authorization": "Bearer " + token})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.read()
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            raise RuntimeError(
+                f"任务 {task_id} 的全局模型尚未生成，无法开始二阶段。"
+                f"常见原因：一阶段联邦训练还没跑完，或任务被「强制停止」"
+                f"（停止的任务不会保存模型）。请确认任务状态为「已完成」后重试。"
+            ) from e
+        if e.code in (401, 403):
+            raise RuntimeError(
+                f"下载全局模型被拒绝（HTTP {e.code}）：请确认本客户端已登录平台，"
+                f"并且已经加入任务 {task_id}。") from e
+        raise RuntimeError(
+            f"下载全局模型失败（HTTP {e.code}）：{e.reason}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(
+            f"无法连接服务端 {server_url}：{e.reason}。"
+            f"请确认服务端容器在线、网络（Tailscale）连通。") from e
 
 
 def parse_model_bytes(raw: bytes) -> tuple[list[str], list]:

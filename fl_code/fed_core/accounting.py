@@ -50,6 +50,16 @@ def sigma_for_epsilon(n_train: int, batch_size: int, local_epochs: int,
         sigma_c = exp(xa + (log(target) - ya) * (xb - xa) / (yb - ya))
         sigma_a, eps_a = sigma_b, eps_b
         sigma_b, eps_b = sigma_c, eps_at(sigma_c)
+
+    # 保底收紧：上面的割线法只保证 ε 落在 ±0.2% 容差内，可能略高于目标
+    # （实测目标 5.0 会收敛到 5.0018）。隐私保证必须严格 ≤ 目标，因此只要
+    # 仍偏高就继续加大噪声乘数复算；ε 近似随 1/σ 递减，故按比例放大即可
+    # 快速收敛，无需牺牲过多精度。
+    for _ in range(10):
+        if eps_b <= target:
+            break
+        sigma_b = sigma_b * max(1.001, eps_b / target)
+        eps_b = eps_at(sigma_b)
     return sigma_b, eps_b
 
 

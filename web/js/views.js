@@ -643,7 +643,7 @@ async function loadTaskDetail(id) {
 }
 
 // 统一样式：所有图表必须标明横纵坐标含义（评审要求，明确表达训练轮次/参与人数等）
-const CHART_GRID = { left: 48, right: 28, top: 46, bottom: 42, containLabel: true };
+const CHART_GRID = { left: 48, right: 52, top: 46, bottom: 42, containLabel: true };
 const AXIS_NAME_TEXT = { fontSize: 12, color: "#475569" };
 const axisX = (name) => ({ name, nameLocation: "middle", nameGap: 20,
                            nameTextStyle: AXIS_NAME_TEXT });

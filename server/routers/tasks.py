@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from server.database import get_db
-from server.models import AuditRound, Participant, RcResult, Task, User
+from server.models import AuditRound, IdSeq, Participant, RcResult, Task, User
 from server.routers.auth import get_current_user_from_header
 from server.fl_runner import MODEL_DIR, get_task_status
 
@@ -64,6 +64,28 @@ def _task_to_dict(task: Task, key: str | None = None) -> dict:
     return d
 
 
+def _next_task_id(db: Session) -> int:
+    """分配一个永不复用的任务 id。
+
+    SQLite 的 INTEGER PRIMARY KEY 取「当前最大 id + 1」：任务被清理干净后
+    新任务会从 1 重新开始，而客户端本地阶段状态按 task_id 命名
+    （app/stage/task<id>.json），新任务就会继承旧任务的二阶段状态。
+    这里用 IdSeq 显式记录已分配到的最大值（详见 models.IdSeq 注释）。
+    """
+    from sqlalchemy import func
+
+    seq = db.query(IdSeq).filter(IdSeq.name == "tasks").first()
+    if seq is None:
+        # 老库升级后的首次调用：以现有任务的最大 id 为起点，避免撞历史 id
+        max_id = db.query(func.max(Task.id)).scalar() or 0
+        seq = IdSeq(name="tasks", value=max_id)
+        db.add(seq)
+        db.flush()
+    seq.value += 1
+    db.flush()
+    return seq.value
+
+
 @router.post("")
 def create_task(
     req: CreateTaskRequest,
@@ -88,6 +110,7 @@ def create_task(
     key = secrets.token_hex(16)
     key_hash = hashlib.sha256(key.encode()).hexdigest()
     task = Task(
+        id=_next_task_id(db),
         name=req.name,
         creator_id=user.id,
         key_hash=key_hash,

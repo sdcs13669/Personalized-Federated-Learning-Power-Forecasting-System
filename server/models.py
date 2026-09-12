@@ -106,3 +106,21 @@ class RcResult(Base):
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
 
     task = relationship("Task", back_populates="rc_results")
+
+
+class IdSeq(Base):
+    """单调递增的 id 序列，保证任务 id 永不复用。
+
+    为什么需要：SQLite 的 ``INTEGER PRIMARY KEY``（无 AUTOINCREMENT）取
+    "当前最大 id + 1"，一旦任务被清空（录制前清理历史任务），新任务会从
+    1 重新开始编号。而客户端本地阶段状态是**按 task_id 命名**的
+    （``app/stage/task<id>.json``），于是新任务会继承旧任务残留的二阶段
+    状态 —— 界面一进去就显示"二阶段已完成"。
+
+    这里显式记录已分配到的最大值，删除任务不再影响后续编号。
+    """
+
+    __tablename__ = "id_seq"
+
+    name = Column(Text, primary_key=True)
+    value = Column(Integer, nullable=False, default=0)

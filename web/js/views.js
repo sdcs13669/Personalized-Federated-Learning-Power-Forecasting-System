@@ -585,12 +585,12 @@ function renderTaskDetail(id) {
   if (App.mode === "client") {
     // ===== 客户端三阶段页（need.md）：训练过程 → 二阶段 → 预测展示 =====
     loadClientTaskDetail(id);
-    // 训练中每 3s 刷新阶段1；二阶段/预测阶段由按钮/状态切换，不轮询
-    App.polling = setInterval(() => loadClientTaskDetail(id, true), 3000);
+    // 训练中每 5s 刷新阶段1；二阶段/预测阶段由按钮/状态切换，不轮询
+    App.polling = setInterval(() => loadClientTaskDetail(id, true), 5000);
   } else {
     // ===== 管理端大屏（6 图）=====
     loadTaskDetail(id);
-    App.polling = setInterval(() => loadTaskDetail(id), 2500);
+    App.polling = setInterval(() => loadTaskDetail(id), 4000);
   }
 }
 
@@ -752,13 +752,16 @@ function setChart(id, option) {
   const el = document.getElementById(id);
   if (!el) return;
   let chart = charts[id];
-  if (!chart || chart.getDom() !== el) {
+  const first = (!chart || chart.getDom() !== el);
+  if (first) {
     if (chart) chart.dispose();
     chart = echarts.init(el);
     charts[id] = chart;
     window.addEventListener("resize", () => chart.resize());
   }
-  chart.setOption({ ...option, tooltip: { trigger: "axis" },
+  // 只有首次绘制带动画；轮询刷新时关闭动画，避免每几秒重放动画导致页面卡顿
+  chart.setOption({ ...option, animation: first,
+                    tooltip: { trigger: "axis" },
                     legend: { show: true, top: 0 } }, true);
 }
 

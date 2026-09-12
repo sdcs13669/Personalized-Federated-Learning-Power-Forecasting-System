@@ -193,16 +193,20 @@ async function doRegister() {
 
 // ===== 广场 =====
 function renderPlaza() {
+  // 任务发起入口统一收敛到 Server 端：客户端模式不提供"发起新任务"，只能凭密钥加入
+  const isServer = App.mode !== "client";
   document.getElementById("view").innerHTML = `
     <div class="page-head anim-in">
       <div>
         <h2>任务广场</h2>
-        <p class="page-sub">浏览可加入的联邦学习任务，或发起新任务</p>
+        <p class="page-sub">${isServer
+          ? "浏览可加入的联邦学习任务，或发起新任务"
+          : "浏览可加入的联邦学习任务，凭服务端下发的密钥加入"}</p>
       </div>
-      <button onclick="showCreateTask()">
+      ${isServer ? `<button onclick="showCreateTask()">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         发起新任务
-      </button>
+      </button>` : ""}
     </div>
     <div class="stat-cards anim-in anim-d1">
       <div class="stat"><div class="num" id="st-total">–</div><div class="lbl">全部任务</div></div>
@@ -230,7 +234,9 @@ async function loadPlaza() {
     document.getElementById("st-training").textContent = training;
     if (!tasks.length) {
       document.getElementById("task-rows").innerHTML =
-        `<tr><td colspan="7" class="empty-row">还没有任务，点右上角"发起新任务"创建第一个吧</td></tr>`;
+        `<tr><td colspan="7" class="empty-row">${App.mode === "client"
+          ? "还没有任务，请等待服务端发起后凭密钥加入"
+          : "还没有任务，点右上角“发起新任务”创建第一个吧"}</td></tr>`;
       return;
     }
     document.getElementById("task-rows").innerHTML = tasks.map((t, i) => `
@@ -244,6 +250,11 @@ async function loadPlaza() {
 }
 
 function showCreateTask() {
+  // 统一入口：任务只由 Server 端发起，客户端模式直接拦截（双保险）
+  if (App.mode === "client") {
+    showToast("任务由服务端统一发起，客户端请凭密钥加入", true);
+    return;
+  }
   openModal(`
     <h3 style="margin-bottom:14px;">发起新任务</h3>
     <div class="form-row"><label>任务名</label><input id="f-name"></div>
@@ -282,11 +293,36 @@ function showJoinTask(id, name) {
   openModal(`
     <h3 style="margin-bottom:14px;">加入任务：${name}</h3>
     <div class="form-row"><label>密钥</label><input id="j-key" autocomplete="off"></div>
-    <div class="form-row"><label>角色 ID（client_id，如 steel_ind_0 / tetouan_0）</label><input id="j-cid" autocomplete="off"></div>
+    <div class="form-row"><label>角色 ID（client_id，如 steel_ind_0 / tetouan_0）</label><input id="j-cid" autocomplete="off" readonly></div>
+    <p class="page-sub" id="j-cid-hint">正在读取本机客户端身份…</p>
     <div style="display:flex;gap:10px;justify-content:flex-end;">
       <button class="secondary" onclick="closeModal()">取消</button>
       <button onclick="doJoinTask(${id})">加入</button>
     </div>`);
+  // 客户端模式自动填入本机 client_id：多机多开时手打 ID 极易打错，
+  // 一旦 client_id 与 agent 配置不符，采集/训练的数据目录就对不上。
+  const cidEl = document.getElementById("j-cid");
+  const hintEl = document.getElementById("j-cid-hint");
+  if (!cidEl || !hintEl) return;
+  if (App.mode !== "client") {
+    cidEl.removeAttribute("readonly");
+    hintEl.textContent = "服务端模式：请填写本次加入所使用的角色 ID";
+    return;
+  }
+  fetch("/local/status").then(r => r.json()).then(s => {
+    if (s && s.client_id) {
+      cidEl.value = s.client_id;
+      const ds = s.dataset_id ? `，本机已采集数据集 ${s.dataset_id}`
+                              : "，本机尚未采集数据";
+      hintEl.textContent = `已按本机配置自动填入，请勿修改${ds}`;
+    } else {
+      cidEl.removeAttribute("readonly");
+      hintEl.textContent = "未能读取本机 client_id，请手动填写";
+    }
+  }).catch(() => {
+    cidEl.removeAttribute("readonly");
+    hintEl.textContent = "未能读取本机 client_id，请手动填写";
+  });
 }
 
 async function doJoinTask(id) {
@@ -586,12 +622,14 @@ async function loadTaskDetail(id) {
         </div>` : ""}
         <div class="grid2">
           <div class="card"><h4>每轮参与人数</h4><div id="ch-participants" class="chart"></div></div>
-          <div class="card"><h4>参与热力图（绿=参与 红=掉线）</h4><div id="ch-heatmap" class="chart"></div></div>
-          <div class="card"><h4>每客户端累计 ε</h4><div id="ch-eps" class="chart"></div></div>
           <div class="card"><h4>全局 loss</h4><div id="ch-loss" class="chart"></div></div>
-          <div class="card"><h4>自适应裁剪阈值 C</h4><div id="ch-clip" class="chart"></div></div>
-          <div class="card"><h4>RC 结果（WAPE %）</h4><div id="ch-rc" class="chart"></div><div id="rc-imgs"></div></div>
-        </div>`;
+        </div>
+        <div class="card">
+          <h4>审计明细（逐轮留痕 · 可离线复核）</h4>
+          <p class="page-sub" style="margin:6px 0;">补两条曲线看不到的明细：本轮究竟是谁掉线、自适应裁剪阈值、各参与方累计隐私预算。逐轮落库、第三方可离线复核 —— 这就是"可溯可审计"。</p>
+          <div style="overflow-x:auto;"><table id="audit-table"></table></div>
+        </div>
+        <div class="card"><h4>RC 客户端对比图</h4><div id="rc-imgs"></div></div>`;
     } else {
       const set = (nid, v) => { const el = document.getElementById(nid); if (el) el.textContent = v; };
       set("st-status", task.status);
@@ -604,71 +642,110 @@ async function loadTaskDetail(id) {
   } catch (e) { showToast(e.message, true); }
 }
 
+// 统一样式：所有图表必须标明横纵坐标含义（评审要求，明确表达训练轮次/参与人数等）
+const CHART_GRID = { left: 16, right: 28, top: 46, bottom: 16, containLabel: true };
+const AXIS_NAME_TEXT = { fontSize: 12, color: "#475569" };
+const axisX = (name) => ({ name, nameLocation: "middle", nameGap: 30,
+                           nameTextStyle: AXIS_NAME_TEXT });
+const axisY = (name) => ({ name, nameLocation: "middle", nameGap: 40,
+                           nameRotate: 90, nameTextStyle: AXIS_NAME_TEXT });
+
 function renderCharts(audit, rc) {
   const rounds = audit.map(a => a.round);
   // 1. 每轮参与人数
   setChart("ch-participants", {
-    xAxis: { type: "category", data: rounds },
-    yAxis: { type: "value", minInterval: 1 },
+    grid: CHART_GRID,
+    xAxis: { type: "category", data: rounds, ...axisX("训练轮次") },
+    yAxis: { type: "value", minInterval: 1, ...axisY("参与人数") },
     series: [{ type: "line", data: audit.map(a => a.joined.length),
                name: "实际参与", areaStyle: {} },
              { type: "line", data: audit.map(a => a.expected.length),
                name: "应参与", lineStyle: { type: "dashed" } }],
   });
-  // 2. 参与热力图（绿=1 参与 / 红=0 掉线）
-  const clients = [...new Set(audit.flatMap(a => a.expected))];
-  const heat = [];
-  audit.forEach((a, ri) => {
-    clients.forEach((cid, ci) => {
-      if (a.expected.includes(cid)) {
-        heat.push([ri, ci, a.joined.includes(cid) ? 1 : 0]);
-      }
-    });
-  });
-  setChart("ch-heatmap", {
-    tooltip: {},
-    xAxis: { type: "category", data: rounds },
-    yAxis: { type: "category", data: clients },
-    visualMap: { min: 0, max: 1, show: false,
-                 inRange: { color: ["#e74c3c", "#2ca02c"] } },
-    series: [{ type: "heatmap", data: heat }],
-  });
-  // 3. 每客户端累计 ε（A 已改为每轮增量上报，前端逐轮累加得到累计）
-  const epsSeries = clients.map(cid => ({
-    name: cid, type: "line",
-    data: audit.map((a, i) => Number((audit.slice(0, i + 1)
-      .reduce((s, x) => s + ((x.client_epsilons || {})[cid] || 0), 0)).toFixed(3))),
-  }));
-  setChart("ch-eps", {
-    xAxis: { type: "category", data: rounds },
-    yAxis: { type: "value", name: "累计 ε" },
-    series: epsSeries,
-  });
-  // 4. 全局 loss
+  // 2. 全局 loss
   setChart("ch-loss", {
-    xAxis: { type: "category", data: rounds },
-    yAxis: { type: "value" },
+    grid: CHART_GRID,
+    xAxis: { type: "category", data: rounds, ...axisX("训练轮次") },
+    yAxis: { type: "value", ...axisY("全局模型损失") },
     series: [{ type: "line", data: audit.map(a => a.loss),
                name: "全局 loss", areaStyle: {} }],
   });
-  // 5. 自适应裁剪阈值 C
-  setChart("ch-clip", {
-    xAxis: { type: "category", data: rounds },
-    yAxis: { type: "value" },
-    series: [{ type: "line", data: audit.map(a => a.clip_norm),
-               name: "C", step: "end" }],
-  });
-  // 6. RC WAPE 对比（全局 vs 全局+RC）
-  setChart("ch-rc", {
-    xAxis: { type: "category", data: rc.map(r => r.client_id) },
-    yAxis: { type: "value" },
-    series: [{ type: "bar", name: "全局模型", data: rc.map(r => r.wape_global) },
-             { type: "bar", name: "全局+RC", data: rc.map(r => r.wape_rc) }],
-  });
-  document.getElementById("rc-imgs").innerHTML = rc.map(r =>
-    r.png_url ? `<div style="margin-top:10px;"><b>${r.client_id}</b><br>
-      <img class="rc-img" src="${r.png_url}" alt="${r.client_id} 对比图"></div>` : ""
-  ).join("");
+  // 3. 客户端上传的二阶段 RC 对比图（属图片证据，非图表，予以保留）
+  const imgs = document.getElementById("rc-imgs");
+  if (imgs) {
+    imgs.innerHTML = rc.map(r =>
+      r.png_url ? `<div style="margin-top:10px;"><b>${r.client_id}</b><br>
+        <img class="rc-img" src="${r.png_url}" alt="${r.client_id} 对比图"></div>` : ""
+    ).join("") || `<p class="page-sub">暂无客户端上传的对比图。</p>`;
+  }
+  // 4. 逐轮审计明细（表格，非图表）
+  renderAuditTable("audit-table", audit);
+}
+
+// ===== 审计明细表（管理端全量视角）=====
+// 只承载「两条曲线看不到的明细」，不与图表重复：
+//   · 掉线名单（图只给个数，给不出是谁）
+//   · 自适应裁剪阈值 C（该曲线已删，此处是唯一入口）
+//   · 各参与方累计 ε（服务端 ε 曲线已删，此处是唯一入口）
+function renderAuditTable(elId, audit) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!audit || !audit.length) {
+    el.innerHTML = `<tr><td colspan="3" class="empty-row">暂无审计记录，训练开始后逐轮写入。</td></tr>`;
+    return;
+  }
+  const clients = [...new Set(audit.flatMap(a => a.expected || []))];
+  const cum = {};
+  const head = `<tr>
+    <th>轮次</th><th>掉线名单</th><th>裁剪阈值 C</th>
+    ${clients.map(c => `<th>累计 ε<br><span style="font-weight:400;color:var(--muted);">${c}</span></th>`).join("")}
+  </tr>`;
+  const rows = audit.map(a => {
+    const eps = a.client_epsilons || {};
+    clients.forEach(c => { cum[c] = (cum[c] || 0) + (eps[c] || 0); });
+    const dropped = a.dropped || [];
+    const droppedCell = dropped.length
+      ? `<span class="badge badge-red">${dropped.join("、")}</span>`
+      : `<span class="badge badge-green">无</span>`;
+    const c = (a.clip_norm === null || a.clip_norm === undefined)
+      ? "—" : fmtNum(a.clip_norm);
+    return `<tr>
+      <td>${a.round}</td>
+      <td>${droppedCell}</td>
+      <td>${c}</td>
+      ${clients.map(cid => `<td>${(cum[cid] || 0).toFixed(4)}</td>`).join("")}
+    </tr>`;
+  }).join("");
+  el.innerHTML = head + rows;
+}
+
+// ===== 审计明细表（客户端自身视角，仅本客户端）=====
+// 与阶段1两条曲线不重复：只给「本方逐轮参与状态」与逐轮精确的累计 ε
+// （曲线给不出 4 位小数的精确值，也无法说明某轮本方是否在列）。
+function renderMyAuditTable(elId, audit, myCid) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!audit || !audit.length || !myCid) {
+    el.innerHTML = `<tr><td colspan="3" class="empty-row">暂无审计记录，训练开始后逐轮写入。</td></tr>`;
+    return;
+  }
+  let cum = 0;
+  const rows = audit.map(a => {
+    const eps = (a.client_epsilons || {})[myCid] || 0;
+    cum += eps;
+    const joined = (a.joined || []).includes(myCid);
+    const expected = (a.expected || []).includes(myCid);
+    const state = joined
+      ? `<span class="badge badge-green">本轮已参与</span>`
+      : (expected ? `<span class="badge badge-red">本轮掉线</span>`
+                  : `<span class="badge badge-gray">未在本轮</span>`);
+    return `<tr>
+      <td>${a.round}</td>
+      <td>${state}</td>
+      <td>${cum.toFixed(4)}</td>
+    </tr>`;
+  }).join("");
+  el.innerHTML = `<tr><th>轮次</th><th>本方参与状态</th><th>我的累计 ε</th></tr>` + rows;
 }
 
 function setChart(id, option) {
@@ -732,7 +809,7 @@ function renderTaskActions(task) {
   if (task.status === "recruiting") {
     box.innerHTML = `
       <button onclick="doStartTask(${task.id})">开始训练</button>
-      <span style="color:var(--muted);font-size:12.5px;">启动联邦训练，需所有参与方已加入并在线</span>`;
+      <span style="color:var(--muted);font-size:12.5px;">启动后服务端会自动等待已加入的参与方接入并开始训练，无需人工盯守；每轮参与与掉线情况均写入审计日志，可追溯</span>`;
   } else if (task.status === "training") {
     box.innerHTML = `
       <button class="danger" onclick="doStopTask(${task.id})">强制停止训练</button>
@@ -804,6 +881,11 @@ function renderClientTask(body, built, ctx) {
         <div class="card"><h4>我的隐私预算 ε 累计</h4><p class="page-sub" style="margin-bottom:8px;">仅本客户端 ${myCid || ""}</p><div id="ch-self-eps" class="chart"></div></div>
         <div class="card"><h4>本地 TCN 模型 loss</h4><p class="page-sub" style="margin-bottom:8px;">仅本客户端 ${myCid || ""}</p><div id="ch-self-loss" class="chart"></div></div>
       </div>
+      <div class="card">
+        <h4>我的审计记录</h4>
+        <p class="page-sub" style="margin:6px 0;">本方逐轮的参与状态与累计隐私预算，均可在本机复核（仅本客户端 ${myCid || ""}）。</p>
+        <div style="overflow-x:auto;"><table id="my-audit-table"></table></div>
+      </div>
       <div id="ct-stage2"></div>
       <div id="ct-stage3"></div>`;
   } else {
@@ -812,16 +894,19 @@ function renderClientTask(body, built, ctx) {
     set("ct-round", `${task.current_round || 0}/${task.rounds}`);
     set("ct-phase", phase1Done ? "阶段1完成" : "阶段1·训练中");
   }
-  // 阶段1 两条曲线
+  // 阶段1：本方审计明细表 + 两条曲线
+  renderMyAuditTable("my-audit-table", audit, myCid);
   setChart("ch-self-eps", {
-    xAxis: { type: "category", data: rounds.length ? rounds : [0] },
-    yAxis: { type: "value", name: "累计 ε" },
+    grid: CHART_GRID,
+    xAxis: { type: "category", data: rounds.length ? rounds : [0], ...axisX("训练轮次") },
+    yAxis: { type: "value", ...axisY("累计隐私预算 ε") },
     series: [{ type: "line", data: rounds.length ? cumEps : [],
                name: myCid, areaStyle: {}, smooth: true }],
   });
   setChart("ch-self-loss", {
-    xAxis: { type: "category", data: rounds.length ? rounds : [0] },
-    yAxis: { type: "value", name: "loss" },
+    grid: CHART_GRID,
+    xAxis: { type: "category", data: rounds.length ? rounds : [0], ...axisX("训练轮次") },
+    yAxis: { type: "value", ...axisY("本地模型损失") },
     series: [{ type: "line", data: rounds.length ? myLoss : [],
                name: "本地 loss", areaStyle: {}, smooth: true, connectNulls: true }],
   });
@@ -866,8 +951,10 @@ function renderStage2Area(body, ctx) {
     const losses = (st && st.stage2_epoch_losses) || [];
     if (document.getElementById("ch-rc-loss")) {
       setChart("ch-rc-loss", {
-        xAxis: { type: "category", data: losses.map((_, i) => i + 1) },
-        yAxis: { type: "value", name: "pinball loss" },
+        grid: CHART_GRID,
+        xAxis: { type: "category", data: losses.map((_, i) => i + 1),
+                 ...axisX("本地训练轮次") },
+        yAxis: { type: "value", ...axisY("修正器 pinball loss") },
         series: [{ type: "line", data: losses, name: "本地修正器 loss",
                    smooth: true, areaStyle: {} }],
       });
@@ -996,11 +1083,13 @@ function renderStage3Charts(d, taskId) {
     </div>`;
   // 静态图1：柱状 = 全局TCN WAPE / 全局+RC WAPE / PINAW（need.md b）
   setChart("ch-wape", {
+    grid: CHART_GRID,
     legend: { top: 0 },
-    xAxis: { type: "category", data: ["全局TCN WAPE", "全局+RC WAPE", "PINAW"] },
+    xAxis: { type: "category", data: ["全局TCN WAPE", "全局+RC WAPE", "PINAW"],
+             ...axisX("评估指标") },
     yAxis: [
-      { type: "value", name: "WAPE %" },
-      { type: "value", name: "区间宽", splitLine: { show: false } },
+      { type: "value", ...axisY("WAPE（%）") },
+      { type: "value", ...axisY("区间平均宽度 PINAW（%）"), splitLine: { show: false } },
     ],
     series: [
       { type: "bar", name: "WAPE", yAxisIndex: 0,
@@ -1048,8 +1137,9 @@ function setupForecastPlayer(chartId, series) {
     const x = Array.from({ length: upto }, (_, i) => i);
     const sl = (arr) => arr.slice(0, upto);
     chart.setOption({
-      xAxis: { type: "category", data: x },
-      yAxis: { type: "value", scale: true },
+      grid: CHART_GRID,
+      xAxis: { type: "category", data: x, ...axisX("预测步（30 分钟/步）") },
+      yAxis: { type: "value", scale: true, ...axisY("用电负荷") },
       legend: { top: 0 },
       series: [
         { type: "line", data: sl(series.real), name: "真实", smooth: true },

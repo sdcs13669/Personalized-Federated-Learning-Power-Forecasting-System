@@ -661,10 +661,9 @@ function renderTaskDetail(id) {
 
 async function loadTaskDetail(id) {
   try {
-    const [task, audit, rc] = await Promise.all([
+    const [task, audit] = await Promise.all([
       api(`/api/tasks/${id}`),
       api(`/api/tasks/${id}/audit`),
-      api(`/api/tasks/${id}/rc-results`).catch(() => []),
     ]);
     const body = document.getElementById("detail-body");
     if (!body) return;
@@ -688,13 +687,7 @@ async function loadTaskDetail(id) {
         <div class="grid2">
           <div class="card"><h4>每轮参与人数</h4><div id="ch-participants" class="chart"></div></div>
           <div class="card"><h4>全局 loss</h4><div id="ch-loss" class="chart"></div></div>
-        </div>
-        <div class="card">
-          <h4>审计明细（逐轮留痕 · 可离线复核）</h4>
-          <p class="page-sub" style="margin:6px 0;">补两条曲线看不到的明细：本轮究竟是谁掉线、自适应裁剪阈值、各参与方累计隐私预算。逐轮落库、第三方可离线复核 —— 这就是"可溯可审计"。</p>
-          <div style="overflow-x:auto;"><table id="audit-table"></table></div>
-        </div>
-        <div class="card"><h4>RC 客户端对比图</h4><div id="rc-imgs"></div></div>`;
+        </div>`;
     } else {
       const set = (nid, v) => { const el = document.getElementById(nid); if (el) el.textContent = v; };
       set("st-status", task.status);
@@ -703,7 +696,7 @@ async function loadTaskDetail(id) {
       set("st-eps", task.dp_epsilon ?? "无");
     }
     renderTaskActions(task);
-    renderCharts(audit, rc);
+    renderCharts(audit);
   } catch (e) { showToast(e.message, true); }
 }
 
@@ -715,7 +708,7 @@ const axisX = (name) => ({ name, nameLocation: "middle", nameGap: 30,
 const axisY = (name) => ({ name, nameLocation: "middle", nameGap: 56,
                            nameRotate: 90, nameTextStyle: AXIS_NAME_TEXT });
 
-function renderCharts(audit, rc) {
+function renderCharts(audit) {
   const rounds = audit.map(a => a.round);
   // 1. 每轮参与人数
   setChart("ch-participants", {
@@ -735,53 +728,8 @@ function renderCharts(audit, rc) {
     series: [{ type: "line", data: audit.map(a => a.loss),
                name: "全局 loss", areaStyle: {} }],
   });
-  // 3. 客户端上传的二阶段 RC 对比图（属图片证据，非图表，予以保留）
-  const imgs = document.getElementById("rc-imgs");
-  if (imgs) {
-    imgs.innerHTML = rc.map(r =>
-      r.png_url ? `<div style="margin-top:10px;"><b>${r.client_id}</b><br>
-        <img class="rc-img" src="${r.png_url}" alt="${r.client_id} 对比图"></div>` : ""
-    ).join("") || `<p class="page-sub">暂无客户端上传的对比图。</p>`;
-  }
-  // 4. 逐轮审计明细（表格，非图表）
-  renderAuditTable("audit-table", audit);
-}
-
-// ===== 审计明细表（管理端全量视角）=====
-// 只承载「两条曲线看不到的明细」，不与图表重复：
-//   · 掉线名单（图只给个数，给不出是谁）
-//   · 自适应裁剪阈值 C（该曲线已删，此处是唯一入口）
-//   · 各参与方累计 ε（服务端 ε 曲线已删，此处是唯一入口）
-function renderAuditTable(elId, audit) {
-  const el = document.getElementById(elId);
-  if (!el) return;
-  if (!audit || !audit.length) {
-    el.innerHTML = `<tr><td colspan="3" class="empty-row">暂无审计记录，训练开始后逐轮写入。</td></tr>`;
-    return;
-  }
-  const clients = [...new Set(audit.flatMap(a => a.expected || []))];
-  const cum = {};
-  const head = `<tr>
-    <th>轮次</th><th>掉线名单</th><th>裁剪阈值 C</th>
-    ${clients.map(c => `<th>累计 ε<br><span style="font-weight:400;color:var(--muted);">${c}</span></th>`).join("")}
-  </tr>`;
-  const rows = audit.map(a => {
-    const eps = a.client_epsilons || {};
-    clients.forEach(c => { cum[c] = (cum[c] || 0) + (eps[c] || 0); });
-    const dropped = a.dropped || [];
-    const droppedCell = dropped.length
-      ? `<span class="badge badge-red">${dropped.join("、")}</span>`
-      : `<span class="badge badge-green">无</span>`;
-    const c = (a.clip_norm === null || a.clip_norm === undefined)
-      ? "—" : fmtNum(a.clip_norm);
-    return `<tr>
-      <td>${a.round}</td>
-      <td>${droppedCell}</td>
-      <td>${c}</td>
-      ${clients.map(cid => `<td>${(cum[cid] || 0).toFixed(4)}</td>`).join("")}
-    </tr>`;
-  }).join("");
-  el.innerHTML = head + rows;
+  // 注：管理端的「审计明细」表格已按需求移除；审计数据仍逐轮落库，
+  // 可通过 GET /api/tasks/{id}/audit 或客户端页面的审计记录查看。
 }
 
 // ===== 审计明细表（客户端自身视角，仅本客户端）=====
